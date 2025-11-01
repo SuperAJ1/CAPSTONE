@@ -9,8 +9,11 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { API_URL } from '../utils/config';
 
 const { width } = Dimensions.get('window');
 
@@ -20,7 +23,7 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://192.168.0.89/rtw_backend/get_inventory.php')
+    fetch(`${API_URL}/get_inventory.php`)
       .then((res) => res.json())
       .then((data) => {
         if (data.status === 'success') {
@@ -55,9 +58,10 @@ export default function Inventory() {
         </View>
 
         <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#888" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search..."
+            placeholder="Search by name, category, or description..."
             placeholderTextColor="#888"
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -65,23 +69,20 @@ export default function Inventory() {
         </View>
 
         <View style={styles.tableContainer}>
-          {/* Table Header */}
           <LinearGradient
-            colors={['#000000', '#000000']}
+            colors={['#000000', '#333333']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={styles.tableHeader}
           >
-            <Text style={styles.headerCell}>ID</Text>
-            <Text style={styles.headerCell}>Name</Text>
-            <Text style={styles.headerCell}>Category</Text>
-            <Text style={styles.headerCell}>Stock</Text>
-            <Text style={styles.headerCell}>Price</Text>
-            <Text style={styles.headerCell}>Added</Text>
+            <Text style={[styles.headerCell, { flex: 2, textAlign: 'left' }]}>Name</Text>
+            <Text style={[styles.headerCell, { flex: 1.5 }]}>Category</Text>
+            <Text style={[styles.headerCell, { flex: 1 }]}>Stock</Text>
+            <Text style={[styles.headerCell, { flex: 1 }]}>Price</Text>
           </LinearGradient>
 
           {loading ? (
-            <ActivityIndicator size="large" color="#C5BAFF" style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color="#007BFF" style={{ marginTop: 20 }} />
           ) : (
             <FlatList
               data={filteredInventory}
@@ -93,17 +94,15 @@ export default function Inventory() {
                     index % 2 === 0 ? styles.rowEven : styles.rowOdd,
                   ]}
                 >
-                  <Text style={styles.cell}>{item.id}</Text>
-                  <Text style={[styles.cell, styles.nameCell]} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.cell}>{item.category || 'Uncategorized'}</Text>
-                  <Text style={[styles.cell, item.stock <= 5 ? styles.lowStock : null]}>{item.stock}</Text>
-                  <Text style={styles.cell}>₱{parseFloat(item.price).toFixed(2)}</Text>
-                  <Text style={styles.cell}>{item.date_added ? new Date(item.date_added).toLocaleDateString() : 'N/A'}</Text>
+                  <Text style={[styles.cell, styles.nameCell, { flex: 2 }]} numberOfLines={1}>{item.name}</Text>
+                  <Text style={[styles.cell, { flex: 1.5 }]}>{item.category || 'N/A'}</Text>
+                  <Text style={[styles.cell, { flex: 1 }, item.stock <= 10 && styles.lowStock, item.stock === 0 && styles.outOfStock]}>{item.stock}</Text>
+                  <Text style={[styles.cell, { flex: 1 }]}>₱{parseFloat(item.price).toFixed(2)}</Text>
                 </View>
               )}
               style={styles.tableScroll}
               contentContainerStyle={styles.tableScrollContent}
-              showsVerticalScrollIndicator={true}
+              showsVerticalScrollIndicator={false}
             />
           )}
         </View>
@@ -120,97 +119,99 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    padding: PADDING,
+    paddingHorizontal: PADDING,
+    paddingTop: PADDING,
   },
   headerContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 15,
-    padding: 10,
+    marginBottom: 20,
   },
   header: {
-    fontSize: width * 0.06,
-    fontWeight: 'bold',
-    color: '#3A3A3A',
+    fontSize: width * 0.07,
+    fontWeight: '900',
+    color: '#2C3E50',
+    letterSpacing: 1,
   },
   searchContainer: {
-    backgroundColor: '#E5E7EB',
-    padding: 10,
-    borderRadius: 30,
-    marginBottom: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    marginBottom: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  searchIcon: {
+    marginRight: 10,
   },
   searchInput: {
-    backgroundColor: '#D3DAD9',
-    padding: 12,
-    borderRadius: 20,
-    fontSize: width * 0.035,
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: width * 0.04,
     color: '#3A3A3A',
-    paddingLeft: 20,
   },
   tableContainer: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    backgroundColor: '#ffffff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowRadius: 12,
+    elevation: 6,
     overflow: 'hidden',
-    minHeight: 0,
   },
   tableHeader: {
     flexDirection: 'row',
-    paddingVertical: 14,
-    paddingHorizontal: 6,
+    padding: 15,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
   headerCell: {
-    flex: 1,
     fontWeight: 'bold',
-    fontSize: width * 0.035,
-    color: '#fff',
+    fontSize: width * 0.038,
+    color: '#FFFFFF',
     textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.1)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 1,
   },
   tableRow: {
     flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 6,
+    alignItems: 'center',
+    padding: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#F0F0F0',
   },
   tableScroll: {
     flex: 1,
   },
   tableScrollContent: {
-    paddingBottom: 16,
+    paddingBottom: 20,
   },
   rowEven: {
-    backgroundColor: '#FBFBFB',
+    backgroundColor: '#FFFFFF',
   },
   rowOdd: {
-    backgroundColor: '#F5F7FA',
+    backgroundColor: '#F8F9FA',
   },
   cell: {
-    flex: 1,
-    fontSize: width * 0.033,
+    fontSize: width * 0.035,
     textAlign: 'center',
-    color: '#555555',
-    fontWeight: '500',
+    color: '#34495E',
   },
   nameCell: {
     textAlign: 'left',
-    paddingLeft: 8,
+    fontWeight: '600',
+    color: '#2C3E50',
   },
   lowStock: {
-    color: '#FF6B6B',
+    color: '#E67E22',
+    fontWeight: 'bold',
+  },
+  outOfStock: {
+    color: '#E74C3C',
     fontWeight: 'bold',
   },
 });

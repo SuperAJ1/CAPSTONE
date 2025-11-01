@@ -28,7 +28,7 @@ export default function ForgotPassword() {
     }
 
     try {
-      const response = await fetch('http://192.168.0.89/rtw_backend/verify_question.php', {
+      const response = await fetch('http://192.168.1.206/rtw_backend/verify_question.php', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

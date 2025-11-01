@@ -21,6 +21,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
+import { useNavigation } from '@react-navigation/native';
+import { API_URL as API_BASE_URL } from '../utils/config';
 
 // Ignore specific warnings
 LogBox.ignoreLogs([
@@ -31,15 +33,11 @@ LogBox.ignoreLogs([
 const { width, height } = Dimensions.get('window');
 const isLandscape = width > height;
 
-// IMPORTANT: Replace with your actual backend IP address.
-// This is critical for your app to connect to your server.
-const API_BASE_URL = 'http://192.168.0.89/rtw_backend';
-
 const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) => {
   if (!isActive) {
     return (
       <View style={styles.cameraOffOverlay}>
-        <Ionicons name="camera-off" size={32} color="#999" />
+        <Ionicons name="scan-outline" size={100} color="#999" />
         <Text style={styles.cameraOffText}>Camera is OFF</Text>
       </View>
     );
@@ -58,6 +56,7 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) =>
 };
 
 export default function Scanner({ userId }) {
+  const navigation = useNavigation();
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraType, setCameraType] = useState('front');
@@ -85,6 +84,11 @@ export default function Scanner({ userId }) {
   const cashShake = useRef(new Animated.Value(0)).current;
   const notifyAnim = useRef(new Animated.Value(0)).current; // 0 hidden, 1 visible
   const [notifyMsg, setNotifyMsg] = useState('');
+
+  // Receipt Modal State
+  const [isReceiptVisible, setIsReceiptVisible] = useState(false);
+  const [receiptDetails, setReceiptDetails] = useState(null);
+  const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
 
   const triggerShake = (anim) => {
     Animated.sequence([
@@ -397,51 +401,33 @@ export default function Scanner({ userId }) {
         return;
       }
 
-      let productToAdd = null;
-      let productIdForCartMatching = null;
+      // Always fetch from the backend to ensure the product is in the database
+      const response = await fetch(
+        `${API_BASE_URL}/product_by_qr.php?qr_code=${encodeURIComponent(data)}`
+      );
+      
+      const responseText = await response.text();
+      console.log('Raw scan response:', responseText);
 
-      // Attempt to parse data as JSON for QR codes with embedded product info
+      let result;
       try {
-        const parsedData = JSON.parse(data);
-        if (typeof parsedData === 'object' && parsedData !== null && parsedData.name && parsedData.price) {
-          // Data is a product object directly from QR code
-          productToAdd = {
-            id: parsedData.id || data,
-            name: parsedData.name,
-            price: parseFloat(parsedData.price),
-            category: parsedData.category || 'Uncategorized',
-            stock: parseInt(parsedData.stock) || 0,
-            qr_code_data: data
-          };
-          productIdForCartMatching = productToAdd.qr_code_data;
+        // The backend might return HTML warnings before the JSON.
+        // Find the first '{' to locate the start of the JSON data.
+        const jsonStartIndex = responseText.indexOf('{');
+        if (jsonStartIndex === -1) {
+          throw new Error('No JSON object found in the server response.');
         }
+        const jsonString = responseText.substring(jsonStartIndex);
+        result = JSON.parse(jsonString);
       } catch (e) {
-        // Data is not JSON, proceed to fetch from API
+        throw new Error(`Server returned invalid JSON. Response: ${responseText.substring(0, 200)}...`);
       }
 
-      if (!productToAdd) {
-        // If product wasn't parsed from QR JSON, fetch from API
-        const response = await fetch(
-          `${API_BASE_URL}/product_by_qr.php?qr_code=${encodeURIComponent(data)}`
-        );
-        const result = await response.json();
-
-        if (result.status === 'success' && result.data) {
-          productToAdd = result.data;
-          productIdForCartMatching = productToAdd.id;
-        } else {
-          Alert.alert('Product Not Found', result.message || 'The scanned product is not in the database.');
-          setIsLoading(false);
-          setTimeout(() => setScanned(false), 1000);
-          return;
-        }
-      }
-
-      if (productToAdd && productIdForCartMatching) {
+      if (result.status === 'success' && result.data) {
         // Add item to cart
-        addScannedItem(productToAdd, productIdForCartMatching, 'scan');
+        addScannedItem(result.data, result.data.id, 'scan');
       } else {
-        Alert.alert('Error', 'Could not process scanned data or product information is incomplete.');
+        Alert.alert('Product Not Found', result.message || 'The scanned product is not in the database.');
       }
     } catch (error) {
       console.error('Scan processing error:', error);
@@ -453,7 +439,7 @@ export default function Scanner({ userId }) {
   }, [scanned, addScannedItem]);
 
   // Purchase completion handler
-  const handleCompletePurchase = useCallback(async () => {
+  const executePurchase = useCallback(async () => {
     if (scannedItems.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
       return;
@@ -489,10 +475,10 @@ export default function Scanner({ userId }) {
             discount: Number(item.discount) || 0
           };
         }),
-        total_amount: Number(total.toFixed(2)),
         global_discount: Number(globalDiscount) || 0,
         cash_tendered: Number(cashTendered) || 0,
-        change: Number(change.toFixed(2)) || 0
+        user_id: userId || 1, // Default to 1 if userId is not available
+        // The backend calculates total and change, so we do not send them.
       };
 
       console.log('Sending payload:', payload);
@@ -525,24 +511,36 @@ export default function Scanner({ userId }) {
       // Refresh the product list to update stock levels
       await fetchProducts(searchQuery);
       
-      Alert.alert(
-        'Purchase Complete',
-        `Total: ₽${total.toFixed(2)}\nChange: ₽${change.toFixed(2)}`,
-        [{ text: 'OK', onPress: clearCart }]
-      );
+      setReceiptDetails({
+        items: [...scannedItems],
+        total,
+        change,
+        cashTendered: numericCashTendered,
+        globalDiscount,
+        subtotal,
+      });
+      setIsReceiptVisible(true);
 
     } catch (error) {
       console.error('Full purchase error:', error);
       Alert.alert(
         'Purchase Failed',
         error.message.includes('JSON')
-          ? 'There was a problem with the server\'s response format. Please contact support.'
+          ? "There was a problem with the server's response format. Please contact support."
           : `Error: ${error.message}`
       );
     } finally {
       setIsLoading(false);
     }
   }, [scannedItems, globalDiscount, cashTendered, total, clearCart, change, numericCashTendered, playBeep, fetchProducts, searchQuery]);
+
+  const handleCompletePurchase = useCallback(() => {
+    if (scannedItems.length === 0) {
+      Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
+      return;
+    }
+    setIsConfirmationModalVisible(true);
+  }, [scannedItems]);
 
   // Initialize camera permissions and fetch initial product list
   useEffect(() => {
@@ -597,12 +595,133 @@ export default function Scanner({ userId }) {
     ) : null
   );
 
+  const renderReceiptModal = () => {
+    if (!isReceiptVisible || !receiptDetails) {
+      return null;
+    }
+
+
+    const { items, total, change, cashTendered, globalDiscount, subtotal } = receiptDetails;
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isReceiptVisible}
+        onRequestClose={() => {
+          setIsReceiptVisible(false);
+          clearCart();
+        }}
+      >
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptModalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.receiptHeader}>
+                <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
+                <Text style={styles.receiptTitle}>Purchase Complete</Text>
+                <Text style={styles.receiptDate}>
+                  {new Date().toLocaleString()}
+                </Text>
+              </View>
+
+              <View style={styles.receiptSection}>
+                <Text style={styles.receiptSectionTitle}>Summary</Text>
+                {items.map(item => (
+                  <View key={item.id} style={styles.receiptItem}>
+                    <Text style={styles.receiptItemQty}>{item.qty}x</Text>
+                    <Text style={styles.receiptItemName} numberOfLines={1}>{item.product.name}</Text>
+                    <Text style={styles.receiptItemTotal}>₽{(item.product.price * item.qty * (1 - item.discount / 100)).toFixed(2)}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.receiptSection}>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Subtotal</Text>
+                  <Text style={styles.receiptTotalValue}>₽{subtotal.toFixed(2)}</Text>
+                </View>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Discount</Text>
+                  <Text style={styles.receiptTotalValue}>{globalDiscount > 0 ? `${globalDiscount}%` : 'N/A'}</Text>
+                </View>
+                <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
+                  <Text style={styles.receiptGrandTotalLabel}>Total</Text>
+                  <Text style={styles.receiptGrandTotalValue}>₽{total.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.receiptSection}>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
+                  <Text style={styles.receiptTotalValue}>₽{cashTendered.toFixed(2)}</Text>
+                </View>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Change Due</Text>
+                  <Text style={styles.receiptTotalValue}>₽{change.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.receiptCloseButton}
+              onPress={() => {
+                setIsReceiptVisible(false);
+                clearCart();
+              }}
+            >
+              <Text style={styles.receiptCloseButtonText}>New Transaction</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderConfirmationModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={isConfirmationModalVisible}
+      onRequestClose={() => setIsConfirmationModalVisible(false)}
+    >
+      <View style={styles.logoutModalOverlay}>
+        <View style={styles.logoutModalContainer}>
+          <Ionicons name="help-circle-outline" size={48} color="#3498db" />
+          <Text style={styles.logoutModalTitle}>Confirm Action</Text>
+          <Text style={styles.logoutModalText}>
+            Are you done adding products?
+          </Text>
+          <View style={styles.logoutModalActions}>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, styles.cancelLogoutButton]}
+              onPress={() => setIsConfirmationModalVisible(false)}
+            >
+              <Text style={[styles.logoutModalButtonText, { color: '#4B5563' }]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, {backgroundColor: '#3498db'}]}
+              onPress={() => {
+                setIsConfirmationModalVisible(false);
+                executePurchase();
+              }}
+            >
+              <Text style={styles.logoutModalButtonText}>Yes, Proceed</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={{ flex: 1 }}>
       <View style={[styles.wrapper, isLandscape && styles.landscapeWrapper]}>
-        {/* Left Panel - Scanner and Search */}
-        <View style={[styles.leftPanel, isLandscape && styles.landscapeLeftPanel]}>
+        {/* Left Panel - Scanner */}
+        <View 
+          style={[styles.leftPanel, isLandscape && styles.landscapeLeftPanel]}
+        >
           <View style={styles.scanHereContainer}>
             <Text style={styles.scanHereText}>SCAN HERE</Text>
           </View>
@@ -634,133 +753,29 @@ export default function Scanner({ userId }) {
             </TouchableOpacity>
           </View>
 
-          {selectedProduct && (
-            <View style={styles.selectedProductContainer}>
-              <Text style={styles.selectedProductTitle}>SELECTED:</Text>
-              <View style={styles.selectedProductRow}>
-                <Text style={styles.selectedProductName} numberOfLines={1}>{selectedProduct.name}</Text>
-                <Text style={styles.selectedProductPrice}>₽{selectedProduct.price.toFixed(2)}</Text>
-              </View>
-              <Text style={styles.selectedProductCategory}>{selectedProduct.category}</Text>
-              <Text style={styles.selectedProductStock}>Stock: {selectedProduct.stock}</Text>
+          <View style={styles.bottomContentContainer}>
+            <View style={styles.logoContainer}>
+                <Image source={require('../assets/logo3.png')} style={styles.logo} />
             </View>
-          )}
-
-          <View style={styles.qtyControls}>
-            <Text style={styles.qtyLabel}>Qty:</Text>
-            <TouchableOpacity
-              style={styles.qtyButton}
-              onPress={() => setQty(prev => Math.max(1, prev - 1))}
-            >
-              <Ionicons name="remove" size={16} color="#333" />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.qtyInput}
-              value={String(qty)}
-              keyboardType="numeric"
-              onChangeText={(text) => {
-                const val = text.replace(/[^0-9]/g, '');
-                setQty(val === '' ? 1 : Math.max(1, parseInt(val, 10)));
-              }}
-            />
-            <TouchableOpacity
-              style={styles.qtyButton}
-              onPress={() => setQty(prev => prev + 1)}
-            >
-              <Ionicons name="add" size={16} color="#333" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={16} color="#999" style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search Items..."
-              placeholderTextColor="#999"
-              value={searchQuery}
-              onChangeText={(text) => {
-                setSearchQuery(text);
-                if (text.trim() === '') {
-                  fetchProducts('');
-                }
-              }}
-              returnKeyType="search"
-              onSubmitEditing={() => fetchProducts(searchQuery)}
-              blurOnSubmit={true}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-          </View>
-
-          <View style={styles.itemsListContainer}>
-            {isSearching ? (
-              <ActivityIndicator size="small" color="#C5BAFF" />
-            ) : (
-              <FlatList
-                data={filteredProducts}
-                keyExtractor={(item) => item.id ? item.id.toString() : Math.random().toString()}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.productItem}
-                    onPress={() => setSelectedProduct(item)}
-                  >
-                    <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.productCategory} numberOfLines={1}>{item.category}</Text>
-                    <Text style={styles.productStockList}>Stock: {item.stock}</Text>
-                  </TouchableOpacity>
-                )}
-                scrollEnabled={true}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={styles.listContent}
-              />
-            )}
-          </View>
-
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={clearCart}
-            >
-              <Ionicons name="close-circle" size={16} color="#fff" />
-              <Text style={styles.buttonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.addButton, selectedProduct?.stock === 0 && { backgroundColor: '#cccccc' }]}
-              onPress={() => {
-                if (selectedProduct) {
-                  // For manual add, use product.id from the selected product
-                  addScannedItem(selectedProduct, selectedProduct.id, 'manual');
-                } else {
-                  Alert.alert('No Product Selected', 'Please scan or select a product first');
-                }
-              }}
-              disabled={selectedProduct?.stock === 0}
-            >
-              <Ionicons name="add-circle" size={16} color="#fff" />
-              <Text style={styles.buttonText}>Add</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Right Panel - Scanned Items and Totals */}
-        <View style={[styles.rightPanel, isLandscape && styles.landscapeRightPanel]}>
-          <ScrollView
-            style={styles.scrollContainer}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            nestedScrollEnabled={true}
+        {/* Middle Panel - Cart and Totals */}
+        <View 
+          style={[styles.middlePanel, isLandscape && styles.landscapeMiddlePanel]}
+        >
+          <ScrollView 
+            style={styles.itemsListContainer}
+            contentContainerStyle={scannedItems.length === 0 ? styles.emptyCartScrollView : {}}
           >
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Cart Items ({scannedItems.length})</Text>
-              {scannedItems.length > 0 ? (
+            {scannedItems.length > 0 ? (
                 scannedItems.map((item) => (
                   <View key={item.id} style={styles.scannedItem}>
                     <View style={styles.scannedItemInfo}>
                       <Text style={styles.scannedItemName} numberOfLines={1}>{item.product.name}</Text>
                       <View style={styles.scannedItemDetails}>
                         <Text style={styles.scannedItemPrice}>
-                          Qty: {item.qty} | Price: ₽{item.product.price.toFixed(2)}
+                          Qty: {item.qty} | Price: ₽{parseFloat(item.product.price).toFixed(2)}
                         </Text>
                         <View style={styles.discountInputContainer}>
                           <Text style={styles.discountLabel}>Discount:</Text>
@@ -785,97 +800,211 @@ export default function Scanner({ userId }) {
                   </View>
                 ))
               ) : (
-                <Text style={styles.emptyCartText}>No items in cart</Text>
+                <View style={styles.emptyCartContainer}>
+                  <Ionicons name="cart-outline" size={64} color="#e0e0e0" />
+                  <Text style={styles.emptyCartText}>Your Cart is Empty</Text>
+                </View>
               )}
-            </View>
-
-            <View style={styles.section}>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Total Qty:</Text>
-                <Text style={styles.totalValue}>{totalQty}</Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Subtotal:</Text>
-                <Text style={styles.totalValue}>₽{subtotal.toFixed(2)}</Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Discount (%):</Text>
-                <TextInput
-                  style={styles.discountInput}
-                  value={String(globalDiscount)}
-                  keyboardType="numeric"
-                  onChangeText={(text) => {
-                    const cleanedText = text.replace(/[^0-9.]/g, '');
-                    const discount = parseFloat(cleanedText) || 0;
-                    if (discount >= 0 && discount <= 100) {
-                      setGlobalDiscount(discount);
-                    } else if (cleanedText === '') {
-                      setGlobalDiscount(0);
-                    }
-                  }}
-                  placeholder="0"
-                />
-              </View>
-              <View style={[styles.totalRow, styles.grandTotal]}>
-                <Text style={styles.totalLabel}>Total:</Text>
-                <Text style={styles.totalValue}>₽{total.toFixed(2)}</Text>
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.cashLabel}>Cash Tendered</Text>
-              <Animated.View style={[{ transform: [{ translateX: cashShake }] }]}>
-                <TextInput
-                  style={styles.cashInput}
-                placeholder="Enter cash amount"
-                keyboardType="numeric"
-                value={cashTendered}
-                onChangeText={(text) => {
-                  const cleanedText = text.replace(/[^0-9.]/g, '');
-                  if (cleanedText.split('.').length > 2) {
-                    return; // Prevent multiple decimal points
-                  }
-                  setCashTendered(cleanedText);
-                    if (cashError) setCashError('');
-                }}
-                  ref={cashInputRef}
-                />
-              </Animated.View>
-              {!!cashError && (
-                <Text style={{ color: '#B00020', fontSize: 12, marginTop: 4, textAlign: 'right' }}>{cashError}</Text>
-              )}
-              {cashTendered !== '' && (
-                <Text style={[
-                  styles.changeText,
-                  change < 0 && { color: '#B00020' }
-                ]}>
-                  Change: ₽{Math.abs(change).toFixed(2)}
-                  {change < 0 && ' (Insufficient)'}
-                </Text>
-              )}
-            </View>
-
-            <View style={styles.logoTitleContainer}>
-              <Image
-                source={require('../assets/logo3.png')}
-                style={styles.logo}
-                resizeMode="contain"
-              />
-              <Text style={styles.logoTitle}>SIMS: Sales and Inventory</Text>
-            </View>
           </ScrollView>
 
-          <TouchableOpacity
-            style={[
-              styles.finishButton,
-              (isLoading || scannedItems.length === 0) && { backgroundColor: '#cccccc' }
-            ]}
-            onPress={handleCompletePurchase}
-            disabled={isLoading || scannedItems.length === 0}
-          >
-            <Ionicons name="checkmark-done" size={18} color="#fff" />
-            <Text style={styles.finishButtonText}>Finish</Text>
-          </TouchableOpacity>
+          {/* Totals and Payment Section */}
+          <View>
+            <View>
+              <View style={styles.section}>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Total Items:</Text>
+                  <Text style={styles.totalValue}>{totalQty}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Subtotal:</Text>
+                  <Text style={styles.totalValue}>₽{subtotal.toFixed(2)}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Global Discount:</Text>
+                  <TextInput
+                    style={styles.discountInput}
+                    value={String(globalDiscount)}
+                    keyboardType="numeric"
+                    onChangeText={(text) => {
+                      const cleanedText = text.replace(/[^0-9.]/g, '');
+                      const discount = parseFloat(cleanedText) || 0;
+                      if (discount >= 0 && discount <= 100) {
+                        setGlobalDiscount(discount);
+                      } else if (cleanedText === '') {
+                        setGlobalDiscount(0);
+                      }
+                    }}
+                    placeholder="0"
+                  />
+                </View>
+                <View style={[styles.totalRow, styles.grandTotal]}>
+                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total:</Text>
+                  <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.section}>
+                <Text style={styles.cashLabel}>Cash Tendered</Text>
+                <Animated.View style={[{ transform: [{ translateX: cashShake }] }]}>
+                  <TextInput
+                    style={styles.cashInput}
+                    placeholder="Enter cash amount"
+                    keyboardType="numeric"
+                    value={cashTendered}
+                    onChangeText={(text) => {
+                      const cleanedText = text.replace(/[^0-9.]/g, '');
+                      if (cleanedText.split('.').length > 2) {
+                        return;
+                      }
+                      setCashTendered(cleanedText);
+                      if (cashError) setCashError('');
+                    }}
+                    ref={cashInputRef}
+                  />
+                </Animated.View>
+                {!!cashError && (
+                  <Text style={{ color: '#B00020', fontSize: 12, marginTop: 4, textAlign: 'right' }}>{cashError}</Text>
+                )}
+                {cashTendered !== '' && (
+                  <Text style={[
+                    styles.changeText,
+                    change < 0 && { color: '#B00020' }
+                  ]}>
+                    Change: ₽{Math.abs(change).toFixed(2)}
+                    {change < 0 && ' (Insufficient)'}
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.actionButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.finishButton,
+                    (isLoading || scannedItems.length === 0) && { backgroundColor: '#A0AEC0', shadowColor: 'transparent' }
+                  ]}
+                  onPress={handleCompletePurchase}
+                  disabled={isLoading || scannedItems.length === 0}
+                >
+                  <Ionicons name="checkmark-done" size={22} color="#fff" />
+                  <Text style={styles.finishButtonText}>Complete Transaction</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Right Panel - Search, Results, and Add Item */}
+        <View 
+          style={[styles.rightPanel, isLandscape && styles.landscapeRightPanel]}
+        >
+          <View style={styles.searchAndControlsContainer}>
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={18} color="#9CA3AF" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search Products..."
+                placeholderTextColor="#9CA3AF"
+                value={searchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  if (text.trim() === '') {
+                    fetchProducts('');
+                  }
+                }}
+                returnKeyType="search"
+                onSubmitEditing={() => fetchProducts(searchQuery)}
+                blurOnSubmit={true}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
+
+            {selectedProduct && (
+              <View style={styles.selectedProductContainer}>
+                <View style={styles.selectedProductHeader}>
+                  <Ionicons name="pricetag-outline" size={18} color="#5E35B1" />
+                  <Text style={styles.selectedProductTitle}>Selected Item</Text>
+                </View>
+                <Text style={styles.selectedProductName} numberOfLines={2}>{selectedProduct.name}</Text>
+                <View style={styles.selectedProductDetailsRow}>
+                  <Text style={styles.selectedProductPrice}>₽{parseFloat(selectedProduct.price).toFixed(2)}</Text>
+                  <Text style={styles.selectedProductStock}>Stock: {selectedProduct.stock}</Text>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.qtyControls}>
+              <Text style={styles.qtyLabel}>Quantity</Text>
+              <TouchableOpacity
+                style={styles.qtyButton}
+                onPress={() => setQty(prev => Math.max(1, prev - 1))}
+              >
+                <Ionicons name="remove" size={16} color="#333" />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.qtyInput}
+                value={String(qty)}
+                keyboardType="numeric"
+                onChangeText={(text) => {
+                  const val = text.replace(/[^0-9]/g, '');
+                  setQty(val === '' ? 1 : Math.max(1, parseInt(val, 10)));
+                }}
+              />
+              <TouchableOpacity
+                style={styles.qtyButton}
+                onPress={() => setQty(prev => prev + 1)}
+              >
+                <Ionicons name="add" size={16} color="#333" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.sectionTitle}>Search Results ({filteredProducts.length})</Text>
+          </View>
+          <View style={styles.searchResultsContainer}>
+            {isSearching ? (
+            <ActivityIndicator size="small" color="#C5BAFF" />
+          ) : (
+            <FlatList
+              data={filteredProducts}
+              keyExtractor={(item) => item.id ? item.id.toString() : Math.random().toString()}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.productItem, selectedProduct?.id === item.id && {backgroundColor: '#E5E7EB', borderColor: '#D1D5DB', borderWidth: 1}]}
+                  onPress={() => setSelectedProduct(item)}
+                >
+                  <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.productStockList}>Stock: {item.stock}</Text>
+                </TouchableOpacity>
+              )}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.listContent}
+            />
+          )}
+          </View>
+
+          <View style={styles.rightActionButtons}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setSelectedProduct(null)}
+            >
+              <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
+              <Text style={[styles.buttonText, {color: '#DC2626'}]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.addButton, {flex: 1}, !selectedProduct && { backgroundColor: '#A0AEC0' }, selectedProduct?.stock === 0 && { backgroundColor: '#A0AEC0' }]}
+              onPress={() => {
+                if (selectedProduct) {
+                  addScannedItem(selectedProduct, selectedProduct.id, 'manual');
+                } else {
+                  Alert.alert('No Product Selected', 'Please scan or select a product first');
+                }
+              }}
+              disabled={!selectedProduct || selectedProduct?.stock === 0}
+            >
+              <Ionicons name="add-circle" size={18} color="#fff" />
+              <Text style={styles.buttonText}>Add to Cart</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -907,6 +1036,8 @@ export default function Scanner({ userId }) {
         }}>{notifyMsg}</Text>
       </Animated.View>
       </View>
+      {renderReceiptModal()}
+      {renderConfirmationModal()}
     </SafeAreaView>
   );
 }
@@ -918,7 +1049,9 @@ const styles = StyleSheet.create({
   },
   wrapper: {
     flex: 1,
-    flexDirection: 'column',
+    flexDirection: 'row',
+    backgroundColor: '#f0f2f5', // A slightly off-white background for the whole app
+    padding: 8,
   },
   landscapeWrapper: {
     flexDirection: 'row',
@@ -926,19 +1059,53 @@ const styles = StyleSheet.create({
   leftPanel: {
     padding: 12,
     backgroundColor: '#FFFFFF',
-    flex: 1,
+    borderRadius: 12,
+    flex: 0.8, // Scanner panel
+    marginRight: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
   },
   landscapeLeftPanel: {
     flex: 0.8,
   },
-  rightPanel: {
+  middlePanel: {
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    flex: 1.2, // Cart panel
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  landscapeMiddlePanel: {
     flex: 1.2,
+  },
+  rightPanel: {
+    flex: 1, // Search panel
     padding: 12,
     backgroundColor: '#fff',
+    borderRadius: 12,
+    marginLeft: 8,
     minHeight: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
   },
   landscapeRightPanel: {
-    flex: 1.2,
+    flex: 1,
+  },
+  searchAndControlsContainer: {
+    paddingBottom: 12,
+  },
+  searchResultsContainer: {
+    flex: 1,
   },
   scrollContainer: {
     flex: 1,
@@ -948,25 +1115,29 @@ const styles = StyleSheet.create({
     paddingBottom: 80,
   },
   scanHereContainer: {
-    backgroundColor: '#000000',
-    paddingVertical: 10,
-    borderRadius: 6,
-    marginBottom: 8,
+    backgroundColor: '#1A202C', // Darker, more modern shade
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginBottom: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   scanHereText: {
     color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
+    fontWeight: '700', // Bolder
+    fontSize: 20,
     textAlign: 'center',
+    letterSpacing: 1,
   },
   scannerBox: {
-    height: 180,
-    backgroundColor: '#d9dce1',
-    borderRadius: 8,
+    width: '100%',
+    aspectRatio: 1, // This makes the height equal to the width, creating a square
+    backgroundColor: '#000',
+    borderRadius: 12,
     overflow: 'hidden',
     marginBottom: 12,
+    borderWidth: 2,
+    borderColor: '#D1C4E9', // Softer purple
   },
   cameraView: {
     flex: 1,
@@ -975,18 +1146,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#d9dce1',
+    backgroundColor: '#f0f2f5',
   },
   cameraOffText: {
     marginTop: 8,
-    fontSize: 14,
-    color: '#666',
+    fontSize: 16,
+    color: '#667085',
+  },
+  cameraOffLogo: {
+    width: 100,
+    height: 100,
+    resizeMode: 'contain',
+    marginBottom: 16,
   },
   cameraControls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+    backgroundColor: '#f7f7f9',
+    borderRadius: 8,
+    padding: 6,
   },
   cameraToggle: {
     flexDirection: 'row',
@@ -994,146 +1174,168 @@ const styles = StyleSheet.create({
   },
   cameraToggleText: {
     marginRight: 8,
-    fontSize: 14,
-    color: '#3A3A3A',
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#344054',
   },
   flipCameraButton: {
-    backgroundColor: 'transparent',
-    padding: 6,
+    backgroundColor: '#fff',
+    padding: 8,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   selectedProductContainer: {
-    backgroundColor: '#E0E0E0',
-    borderRadius: 6,
-    padding: 8,
+    backgroundColor: '#F3E5F5',
+    borderRadius: 12,
+    padding: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#BDBDBD',
+    borderColor: '#D1C4E9',
+  },
+  selectedProductHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   selectedProductTitle: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    marginBottom: 4,
-  },
-  selectedProductRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  selectedProductName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#3A3A3A',
-    flex: 1,
-    marginRight: 8,
+    color: '#5E35B1',
+    marginLeft: 6,
+    textTransform: 'uppercase',
+  },
+  selectedProductName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  selectedProductDetailsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   selectedProductPrice: {
-    fontSize: 14,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#3A3A3A',
-  },
-  selectedProductCategory: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+    color: '#5E35B1',
   },
   selectedProductStock: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
-    marginTop: 4,
+    fontWeight: '500',
   },
   qtyControls: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
+    backgroundColor: '#f7f7f9',
+    borderRadius: 8,
+    padding: 8,
   },
   qtyLabel: {
-    marginRight: 8,
-    fontSize: 14,
-    color: '#3A3A3A',
+    marginRight: 'auto',
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#344054',
   },
   qtyButton: {
-    backgroundColor: '#E8F9FF',
-    padding: 6,
-    borderRadius: 4,
+    backgroundColor: '#fff',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   qtyInput: {
-    width: 40,
+    width: 50,
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 6,
-    marginHorizontal: 6,
+    borderRadius: 6,
+    paddingVertical: 8,
+    marginHorizontal: 8,
     textAlign: 'center',
-    fontSize: 14,
+    fontSize: 16,
+    backgroundColor: '#fff',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 6,
-    paddingHorizontal: 10,
+    backgroundColor: '#f7f7f9',
+    borderRadius: 8,
+    paddingHorizontal: 12,
     marginBottom: 12,
-    height: 36,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   searchIcon: {
-    marginRight: 6,
+    marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#3A3A3A',
+    fontSize: 16,
+    color: '#344054',
   },
   itemsListContainer: {
     flex: 1,
-    maxHeight: 200,
     marginBottom: 12,
+    backgroundColor: '#f7f7f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   productItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    margin: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   productName: {
     flex: 1,
-    color: '#3A3A3A',
-    textAlign: 'left',
-    fontSize: 12,
-  },
-  productCategory: {
-    flex: 1,
-    color: '#666',
-    textAlign: 'center',
-    fontSize: 12,
+    color: '#344054',
+    fontWeight: '500',
+    fontSize: 15,
   },
   productStockList: {
-    flex: 1,
-    color: '#3A3A3A',
-    textAlign: 'right',
-    fontSize: 12,
+    color: '#667085',
+    fontSize: 14,
+  },
+  rightActionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 'auto',
+    paddingTop: 8,
   },
   actionButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 16,
   },
   cancelButton: {
-    flex: 1,
-    backgroundColor: '#B00020',
-    padding: 10,
-    borderRadius: 6,
-    marginRight: 6,
+    flex: 0.5,
+    backgroundColor: '#FEE2E2',
+    padding: 12,
+    borderRadius: 8,
+    marginRight: 8,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
   addButton: {
-    flex: 1,
-    backgroundColor: '#4CAF50',
-    padding: 10,
-    borderRadius: 6,
-    marginLeft: 6,
+    backgroundColor: '#10B981', // A modern green
+    padding: 12,
+    borderRadius: 8,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
@@ -1141,151 +1343,500 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 14,
-    marginLeft: 6,
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  finishButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+    marginLeft: 12,
+  },
+  finishButton: {
+      flex: 1,
+    backgroundColor: '#000000',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   section: {
     marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    marginBottom: 8,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#344054',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   scannedItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
+    padding: 10,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginHorizontal: 8,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   scannedItemInfo: {
     flex: 1,
   },
   scannedItemName: {
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    fontSize: 12,
+    fontWeight: '600',
+    color: '#344054',
+    fontSize: 16,
   },
   scannedItemDetails: {
-    marginTop: 4,
+    marginTop: 6,
   },
   scannedItemPrice: {
-    color: '#666',
-    fontSize: 11,
+    color: '#667085',
+    fontSize: 14,
   },
   discountInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 8,
   },
   discountLabel: {
-    fontSize: 11,
-    color: '#666',
-    marginRight: 4,
+    fontSize: 14,
+    color: '#667085',
+    marginRight: 6,
   },
   discountInput: {
-    width: 36,
+    width: 45,
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 4,
-    fontSize: 11,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    fontSize: 14,
     textAlign: 'center',
+    backgroundColor: '#fff',
   },
   discountPercent: {
-    fontSize: 11,
-    color: '#666',
+    fontSize: 14,
+    color: '#667085',
     marginLeft: 4,
   },
   scannedItemTotal: {
     fontWeight: 'bold',
-    color: '#3A3A3A',
-    marginHorizontal: 8,
-    fontSize: 12,
+    color: '#1A202C',
+    marginHorizontal: 10,
+    fontSize: 16,
   },
   removeButton: {
     padding: 4,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 20,
+  },
+  emptyCartScrollView: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyCartContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   emptyCartText: {
-    color: '#999',
-    textAlign: 'center',
-    paddingVertical: 12,
-    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 12,
+    fontSize: 18,
+    fontWeight: '500',
   },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    paddingVertical: 6,
   },
   grandTotal: {
     borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingTop: 8,
+    borderTopColor: '#e2e8f0',
+    paddingTop: 12,
     marginTop: 8,
   },
   totalLabel: {
-    color: '#666',
-    fontSize: 12,
+    color: '#667085',
+    fontSize: 15,
   },
   totalValue: {
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    fontSize: 12,
+    fontWeight: '600',
+    color: '#344054',
+    fontSize: 15,
   },
   cashLabel: {
-    marginBottom: 6,
-    color: '#666',
-    fontSize: 12,
+    marginBottom: 8,
+    color: '#667085',
+    fontSize: 15,
   },
   cashInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 8,
-    backgroundColor: '#f5f5f5',
-    fontSize: 14,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#fff',
+    fontSize: 16,
   },
   changeText: {
-    marginTop: 6,
+    marginTop: 8,
     textAlign: 'right',
-    color: '#3A3A3A',
+    color: '#344054',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 15,
   },
-  logoTitleContainer: {
+  bottomContentContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 20,
   },
   logo: {
-    width: 220,
-    height: 220,
+    width: 180,
+    height: 180,
+    resizeMode: 'contain',
+    opacity: 0.8,
+  },
+  settingsContainer: {
+    alignItems: 'flex-end',
     marginBottom: 10,
   },
-  logoTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  finishButton: {
-    backgroundColor: '#000000',
-    padding: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginTop: 8,
+  settingsButton: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  settingsButtonText: {
+    color: '#344054',
+    fontWeight: '600',
+    marginLeft: 6,
+    fontSize: 12,
+  },
+  settingsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsModalContainer: {
+    width: '90%',
+    maxWidth: 320,
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  settingsModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  settingsModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  settingsModalCloseButton: {
+    padding: 5,
+  },
+  settingsModalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  settingsModalButtonTextBox: {
+    marginLeft: 15,
+  },
+  settingsModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#344054',
+  },
+  settingsModalButtonSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  settingsLogoutButton: {
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'flex-start',
+  },
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  finishButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
+  cancelLogoutButton: {
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
     marginLeft: 8,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#fff',
+    borderWidth: 3,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+  },
+  walkthroughTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  walkthroughDescription: {
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#777',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#000',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   permissionContainer: {
     flex: 1,
@@ -1297,7 +1848,7 @@ const styles = StyleSheet.create({
   permissionText: {
     textAlign: 'center',
     marginBottom: 20,
-    fontSize: 16,
+    fontSize: 20,
     color: '#3A3A3A',
   },
   button: {
@@ -1329,5 +1880,740 @@ const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FBFBFB',
+  },
+  permissionText: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 20,
+    color: '#3A3A3A',
+  },
+  button: {
+    backgroundColor: '#C5BAFF',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 5,
+  },
+  modalText: {
+    marginTop: 16,
+    color: '#3A3A3A',
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FBFBFB',
+  },
+  permissionText: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 20,
+    color: '#3A3A3A',
+  },
+  button: {
+    backgroundColor: '#C5BAFF',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 5,
+  },
+  modalText: {
+    marginTop: 16,
+    color: '#3A3A3A',
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+   },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FBFBFB',
+  },
+  permissionText: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 20,
+    color: '#3A3A3A',
+  },
+  button: {
+    backgroundColor: '#C5BAFF',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 5,
+  },
+  modalText: {
+    marginTop: 16,
+    color: '#3A3A3A',
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    marginLeft: 8,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#fff',
+    borderWidth: 3,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+  },
+  walkthroughTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  walkthroughDescription: {
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#777',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#000',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

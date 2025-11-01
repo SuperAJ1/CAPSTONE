@@ -11,6 +11,9 @@ import Scanner from '../screens/Scanner';
 import Scanner2 from '../screens/Scanner2';
 import Dashboard from '../screens/Dashboard'; // Assuming this is your MainApp screen
 
+import DrawerNavigator from './DrawerNavigator';
+
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigation() {
@@ -44,8 +47,8 @@ export default function AppNavigation() {
           options={{ headerShown: false }} 
         />
         <Stack.Screen 
-          name="Dashboard"  // Changed from MainApp to Dashboard to match your file structure
-          component={Dashboard} 
+          name="MainApp"
+          component={DrawerNavigator} 
           options={{ headerShown: false }} 
         />
       </Stack.Navigator>

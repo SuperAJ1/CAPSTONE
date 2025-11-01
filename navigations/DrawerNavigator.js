@@ -11,13 +11,17 @@ import CustomDrawer from '../components/CustomDrawer';
 
 const Drawer = createDrawerNavigator();
 
-export default function DrawerNavigator() {
-  const route = useRoute();
-  const { role } = route.params || { role: 'user' };
+export default function DrawerNavigator({ route }) {
+  const { user } = route.params;
+  const { role } = user;
+
+  const scannerComponent = (props) => <Scanner {...props} userId={user.id} />;
+  const dashboardComponent = (props) => <Dashboard {...props} user={user} />;
+  const inventoryComponent = (props) => <Inventory {...props} user={user} />;
 
   return (
     <Drawer.Navigator
-      drawerContent={(props) => <CustomDrawer {...props} />}
+      drawerContent={(props) => <CustomDrawer {...props} user={user} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,
         headerTitle: () => (
@@ -56,7 +60,7 @@ export default function DrawerNavigator() {
         <>
           <Drawer.Screen
             name="Dashboard"
-            component={Dashboard}
+            component={dashboardComponent}
             options={{
               drawerIcon: ({ color, size }) => (
                 <Feather name="home" color={color} size={size} />
@@ -65,7 +69,7 @@ export default function DrawerNavigator() {
           />
           <Drawer.Screen
             name="Inventory"
-            component={Inventory}
+            component={inventoryComponent}
             options={{
               drawerIcon: ({ color, size }) => (
                 <Feather name="box" color={color} size={size} />
@@ -77,7 +81,7 @@ export default function DrawerNavigator() {
 
       <Drawer.Screen
         name="Scanner"
-        component={Scanner}
+        component={scannerComponent}
         options={{
           drawerIcon: ({ color, size }) => (
             <Feather name="camera" color={color} size={size} />

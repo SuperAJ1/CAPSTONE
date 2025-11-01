@@ -20,6 +20,8 @@ import { TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 
+import { API_URL } from '../utils/config';
+
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const IS_LANDSCAPE = SCREEN_WIDTH > SCREEN_HEIGHT;
 const CARD_MAX_WIDTH = IS_LANDSCAPE ? Math.min(640, SCREEN_WIDTH * 0.55) : 620;
@@ -128,9 +130,8 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const API_URL = 'http://192.168.0.89/rtw_backend/login2.php';
       
-      const response = await fetch(API_URL, {
+      const response = await fetch(`${API_URL}/login2.php`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -322,30 +323,52 @@ export default function Login() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F7F8FA', // A slightly off-white background
   },
   keyboardAvoidingView: {
     flex: 1,
   },
   scrollViewContent: {
     flexGrow: 1,
-    justifyContent: 'flex-start',
-    minHeight: '100%',
-    paddingTop: IS_LANDSCAPE ? 4 : 8,
+    justifyContent: 'center', // Center content vertically
+    paddingVertical: 20,
   },
   container: {
-    flexGrow: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  headerContainer: { display: 'none' },
-  formContainer: {
-    padding: SCREEN_WIDTH * 0.08,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
   },
   centerWrapper: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 24,
     width: '100%',
+    maxWidth: CARD_MAX_WIDTH,
+    alignItems: 'center',
+  },
+  brandingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center', // Center the logo and title
+    gap: 16,
+    marginBottom: 24,
+  },
+  brandingTextCol: {
+    justifyContent: 'center',
+  },
+  brandTitle: {
+    fontSize: SCREEN_WIDTH * 0.07, // Larger title
+    fontWeight: 'bold',
+    color: '#1A202C',
+  },
+  brandSubtitle: {
+    color: '#4A5568',
+    fontSize: SCREEN_WIDTH * 0.03,
+    letterSpacing: 1.5, // More spacing
+    fontWeight: '500',
+  },
+  logo: {
+    width: LOGO_SIZE,
+    height: LOGO_SIZE,
+    resizeMode: 'contain',
   },
   card: {
     width: '92%',
@@ -356,13 +379,13 @@ const styles = StyleSheet.create({
     borderColor: '#D3DAD9',
     padding: 18,
     shadowColor: '#000',
-    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
     shadowRadius: 12,
-    elevation: 2,
-    marginTop: 4,
+    elevation: 5,
   },
   welcomeTitle: {
-    fontSize: SCREEN_WIDTH * 0.06,
+    fontSize: SCREEN_WIDTH * 0.065,
     textAlign: 'center',
     fontWeight: '700',
     color: '#37353E',

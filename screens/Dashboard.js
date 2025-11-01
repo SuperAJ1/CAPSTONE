@@ -15,12 +15,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useResponsive } from '../utils/responsive';
 import { PinchGestureHandler, State } from 'react-native-gesture-handler';
 
+import { API_URL } from '../utils/config';
+
 const { width } = Dimensions.get('window');
 const basePadding = width * 0.04;
 
 const fetchInventory = async () => {
   try {
-    const response = await fetch('http://192.168.0.89/rtw_backend/get_inventory.php');
+    const response = await fetch(`${API_URL}/get_inventory.php`);
     const data = await response.json();
     
     // Handle the new response structure
@@ -184,36 +186,36 @@ export default function Dashboard() {
           </Text>
 
           <View style={[styles.summaryRow, isTablet && { justifyContent: 'space-between' }]}>
-            <View style={[styles.summaryCard, isTablet && { flexBasis: '23.5%', minWidth: '23.5%', maxWidth: '23.5%' }, {backgroundColor: 'transparent', padding: 0}]}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={[styles.gradientCard, { padding: basePadding }]}>
-                <Feather name="box" size={28} color="#3A7BD5" style={styles.cardIcon} />
-                <Text style={styles.summaryLabel}>Total Products</Text>
-                <Text style={styles.summaryValue}>{totalProducts}</Text>
-                <Text style={styles.summarySub}>Active inventory items</Text>
+            <View style={styles.mergedCardContainer}>
+              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={styles.mergedGradientCard}>
+                <View style={styles.splitCard}>
+                  <Feather name="box" size={28} color="#3A7BD5" style={styles.cardIcon} />
+                  <Text style={styles.summaryLabel}>Total Products</Text>
+                  <Text style={styles.summaryValue}>{totalProducts}</Text>
+                  <Text style={styles.summarySub}>Active inventory items</Text>
+                </View>
+                <View style={styles.splitCard}>
+                  <Feather name="dollar-sign" size={28} color="#00838F" style={styles.cardIcon} />
+                  <Text style={styles.summaryLabel}>Total Inventory Value</Text>
+                  <Text style={styles.summaryValue}>₱{totalValue.toFixed(2)}</Text>
+                  <Text style={styles.summarySub}>Current stock value</Text>
+                </View>
               </LinearGradient>
             </View>
-            <View style={[styles.summaryCard, isTablet && { flexBasis: '23.5%', minWidth: '23.5%', maxWidth: '23.5%' }, {backgroundColor: 'transparent', padding: 0}]}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={[styles.gradientCard, { padding: basePadding }]}>
-                <Feather name="dollar-sign" size={28} color="#00838F" style={styles.cardIcon} />
-                <Text style={styles.summaryLabel}>Total Inventory Value</Text>
-                <Text style={styles.summaryValue}>₱{totalValue.toFixed(2)}</Text>
-                <Text style={styles.summarySub}>Current stock value</Text>
-              </LinearGradient>
-            </View>
-            <View style={[styles.summaryCard, isTablet && { flexBasis: '23.5%', minWidth: '23.5%', maxWidth: '23.5%' }, {backgroundColor: 'transparent', padding: 0}]}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={[styles.gradientCard, { padding: basePadding }]}>
-                <Feather name="arrow-down-circle" size={28} color="#C62828" style={styles.cardIcon} />
-                <Text style={styles.summaryLabel}>Low Stock Items</Text>
-                <Text style={styles.summaryValue}>{lowStock}</Text>
-                <Text style={styles.summarySub}>Need restocking</Text>
-              </LinearGradient>
-            </View>
-            <View style={[styles.summaryCard, isTablet && { flexBasis: '23.5%', minWidth: '23.5%', maxWidth: '23.5%' }, {backgroundColor: 'transparent', padding: 0}]}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={[styles.gradientCard, { padding: basePadding }]}>
-                <Feather name="x-circle" size={28} color="#6A1B9A" style={styles.cardIcon} />
-                <Text style={styles.summaryLabel}>Out of Stock</Text>
-                <Text style={styles.summaryValue}>{outOfStock}</Text>
-                <Text style={styles.summarySub}>Requires attention</Text>
+            <View style={styles.mergedCardContainer}>
+              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={styles.mergedGradientCard}>
+                <View style={styles.splitCard}>
+                  <Feather name="arrow-down-circle" size={28} color="#C62828" style={styles.cardIcon} />
+                  <Text style={styles.summaryLabel}>Low Stock Items</Text>
+                  <Text style={styles.summaryValue}>{lowStock}</Text>
+                  <Text style={styles.summarySub}>Need restocking</Text>
+                </View>
+                <View style={styles.splitCard}>
+                  <Feather name="x-circle" size={28} color="#6A1B9A" style={styles.cardIcon} />
+                  <Text style={styles.summaryLabel}>Out of Stock</Text>
+                  <Text style={styles.summaryValue}>{outOfStock}</Text>
+                  <Text style={styles.summarySub}>Requires attention</Text>
+                </View>
               </LinearGradient>
             </View>
           </View>
@@ -341,39 +343,65 @@ const styles = StyleSheet.create({
     maxWidth: '49%',
   },
   welcome: {
-    fontSize: width * 0.06,
+    fontSize: width * 0.07,
     fontWeight: '700',
     color: '#3A3A3A',
     fontFamily: 'Poppins_700Bold',
     marginTop: 10,
   },
   subtitle: {
-    fontSize: width * 0.04,
+    fontSize: width * 0.045,
     color: '#555555',
     fontFamily: 'Poppins_400Regular',
     marginBottom: 5,
   },
   datetime: {
-    fontSize: width * 0.035,
+    fontSize: width * 0.04,
     color: '#777777',
     marginBottom: basePadding,
     fontFamily: 'Poppins_400Regular',
   },
   summaryRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     flexWrap: 'wrap',
+    marginHorizontal: -basePadding * 0.25,
+    justifyContent: 'space-between',
   },
-  summaryCard: {
-    flexBasis: '47%',
+  mergedCardContainer: {
+    flexBasis: '48%',
     flexGrow: 1,
     borderRadius: 16,
-    padding: basePadding,
     marginBottom: basePadding * 0.5,
-    alignItems: 'flex-start',
     minWidth: 0,
-    borderWidth: 0,
     overflow: 'hidden',
+    marginHorizontal: basePadding * 0.25,
+  },
+  mergedGradientCard: {
+    borderRadius: 16,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    padding: basePadding,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  splitCard: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  summaryCard: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    borderRadius: 16,
+    marginBottom: basePadding * 0.5,
+    minWidth: 0,
+    overflow: 'hidden',
+    marginHorizontal: basePadding * 0.25,
+    flexDirection: 'column',
   },
   gradientCard: {
     borderRadius: 16,
@@ -384,34 +412,37 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
+    padding: basePadding,
+    flex: 1,
   },
   cardIcon: {
-    marginBottom: 10,
+    marginBottom: 12,
   },
   summaryLabel: {
-    fontSize: width * 0.035,
+    fontSize: width * 0.04,
     color: '#555555',
     fontFamily: 'Poppins_400Regular',
+    textAlign: 'center',
   },
   summaryValue: {
-    fontSize: width * 0.055,
+    fontSize: width * 0.065,
     fontWeight: 'bold',
     color: '#3A3A3A',
     fontFamily: 'Poppins_700Bold',
     marginVertical: 5,
   },
   summarySub: {
-    fontSize: width * 0.03,
+    fontSize: width * 0.035,
     color: '#777777',
     fontFamily: 'Poppins_400Regular',
+    textAlign: 'center',
   },
   fullWidthCard: {
     width: '100%',
     borderRadius: 16,
-    padding: basePadding,
     marginBottom: basePadding,
-    borderWidth: 0,
     overflow: 'hidden',
+    flexDirection: 'column',
   },
   cardNoBorder: {
     borderWidth: 0,
@@ -419,7 +450,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardTitle: {
-    fontSize: width * 0.045,
+    fontSize: width * 0.05,
     fontWeight: '600',
     color: '#3A3A3A',
     fontFamily: 'Poppins_600SemiBold',
@@ -428,25 +459,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 15,
   },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 8,
-    gap: 8,
+    marginBottom: 12,
+    gap: 10,
     flexWrap: 'wrap',
-    paddingVertical: 8,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F5F5F5',
   },
   itemIcon: {
     marginRight: 8,
-    marginTop: 2,
+    marginTop: 4,
   },
   itemName: {
     fontWeight: '600',
-    fontSize: width * 0.04,
+    fontSize: width * 0.042,
     color: '#3A3A3A',
     fontFamily: 'Poppins_600SemiBold',
     flexShrink: 1,
@@ -455,48 +486,48 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginVertical: 2,
+    marginVertical: 4,
     flexWrap: 'wrap',
   },
   categoryTag: {
     borderRadius: 6,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     marginRight: 6,
   },
   categoryText: {
-    fontSize: width * 0.03,
+    fontSize: width * 0.035,
     fontWeight: '500',
     fontFamily: 'Poppins_400Regular',
   },
   itemStock: {
     color: '#777777',
-    fontSize: width * 0.032,
+    fontSize: width * 0.035,
     fontFamily: 'Poppins_400Regular',
   },
   itemPrice: {
     color: '#3A3A3A',
     fontWeight: '600',
-    fontSize: width * 0.032,
+    fontSize: width * 0.035,
     fontFamily: 'Poppins_600SemiBold',
   },
   itemDate: {
     color: '#999999',
-    fontSize: width * 0.03,
-    marginTop: 2,
+    fontSize: width * 0.035,
+    marginTop: 4,
     fontFamily: 'Poppins_400Regular',
   },
   rank: {
     fontWeight: 'bold',
     color: '#C5BAFF',
-    width: 18,
-    fontSize: width * 0.04,
+    width: 20,
+    fontSize: width * 0.042,
     fontFamily: 'Poppins_600SemiBold',
   },
   itemValue: {
     fontWeight: 'bold',
     color: '#3A3A3A',
-    fontSize: width * 0.04,
+    fontSize: width * 0.042,
     marginLeft: 8,
     fontFamily: 'Poppins_700Bold',
   },
@@ -522,24 +553,24 @@ const styles = StyleSheet.create({
   emptyChartText: {
     marginTop: 8,
     color: '#999999',
-    fontSize: width * 0.035,
+    fontSize: width * 0.04,
     fontFamily: 'Poppins_400Regular',
   },
   headerContainer: {
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 20,
   },
   titleContainer: {
     backgroundColor: '#000000',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    width: '80%',
+    paddingHorizontal: 25,
+    paddingVertical: 12,
+    borderRadius: 25,
+    width: '85%',
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerText: {
-    fontSize: width * 0.05,
+    fontSize: width * 0.055,
     fontWeight: 'bold',
     color: '#FFFFFF',
     fontFamily: 'Poppins_700Bold',
@@ -561,5 +592,6 @@ const styles = StyleSheet.create({
   zoomButtonText: {
     color: '#ffffff',
     fontWeight: 'bold',
+    fontSize: 16,
   },
 });
