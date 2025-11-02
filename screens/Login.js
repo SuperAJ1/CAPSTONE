@@ -175,7 +175,7 @@ export default function Login() {
         if (user.role === 'user') {
           navigation.reset({
             index: 0,
-            routes: [{ name: 'Scanner2', params: { user: user } }],
+            routes: [{ name: 'MainApp', params: { initialRouteName: 'Scanner' } }],
           });
         } else if (user.role === 'admin') {
           navigation.reset({

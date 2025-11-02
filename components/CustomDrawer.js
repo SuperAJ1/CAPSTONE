@@ -1,131 +1,223 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Image,
+  Modal,
 } from 'react-native';
 import {
   DrawerContentScrollView,
   DrawerItemList,
 } from '@react-navigation/drawer';
-import { FontAwesome as Icon } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 
 export default function CustomDrawer(props) {
-  return (
-    <DrawerContentScrollView
-      {...props}
-      contentContainerStyle={styles.container}
-    >
-      {/* Logo/Header Section - Now with bigger logo */}
-      <View style={styles.headerContainer}>
-        <Image 
-          source={require('../assets/logo3.png')} 
-          style={styles.logo} 
-        />
-        <Text style={styles.brandTitle}>SIMS</Text>
-        <Text style={styles.brandSubtitle}>SALES AND INVENTORY</Text>
-      </View>
+  const { user, navigation } = props;
+  const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
 
-      {/* Main Drawer Items */}
-      <View style={styles.drawerList}>
-        <DrawerItemList 
-          {...props} 
-          activeTintColor="#000000"
-          inactiveTintColor="#000000"
-          activeBackgroundColor="#D3DAD9"
-          labelStyle={styles.menuText}
-          itemStyle={styles.menuItem}
-        />
+  // Fallback for user properties if they don't exist
+  const userName = user?.name || 'ADMIN';
+  const userRole = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'User';
+
+  const handleLogout = () => {
+    setIsLogoutModalVisible(false);
+    // Reset navigation stack and go to Landing
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Landing' }],
+    });
+  };
+
+  const renderLogoutConfirmationModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={isLogoutModalVisible}
+      onRequestClose={() => setIsLogoutModalVisible(false)}
+    >
+      <View style={styles.logoutModalOverlay}>
+        <View style={styles.logoutModalContainer}>
+          <Ionicons name="log-out-outline" size={48} color="#D94848" />
+          <Text style={styles.logoutModalTitle}>Confirm Logout</Text>
+          <Text style={styles.logoutModalText}>
+            Are you sure you want to end your session?
+          </Text>
+          <View style={styles.logoutModalActions}>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, styles.cancelLogoutButton]}
+              onPress={() => setIsLogoutModalVisible(false)}
+            >
+              <Text style={[styles.logoutModalButtonText, { color: '#4B5563' }]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, styles.confirmLogoutButton]}
+              onPress={handleLogout}
+            >
+              <Text style={styles.logoutModalButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
+    </Modal>
+  );
+
+  return (
+    <View style={{ flex: 1 }}>
+      <DrawerContentScrollView
+        {...props}
+        contentContainerStyle={styles.container}
+      >
+        {/* Profile Section */}
+        <View style={styles.profileContainer}>
+          <View style={styles.avatar}>
+            <Feather name="user" size={40} color="#E5E7EB" />
+          </View>
+          <Text style={styles.userName}>{userName}</Text>
+          <Text style={styles.userRole}>{userRole}</Text>
+        </View>
+
+        {/* Main Drawer Items */}
+        <View style={styles.drawerList}>
+          <DrawerItemList {...props} />
+        </View>
+      </DrawerContentScrollView>
 
       {/* Logout Button */}
       <View style={styles.logoutContainer}>
         <TouchableOpacity
           style={styles.logoutButton}
-          onPress={() => props.navigation.navigate('Login')}
+          onPress={() => setIsLogoutModalVisible(true)}
         >
-          <View style={styles.iconLabel}>
-            <Icon name="sign-out" size={18} color="#FFFFFF" style={styles.icon} />
-            <Text style={styles.logoutText}>LOGOUT</Text>
-          </View>
+          <Feather name="log-out" size={22} color="#A1A1AA" style={styles.icon} />
+          <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
       </View>
-    </DrawerContentScrollView>
+      {renderLogoutConfirmationModal()}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FBFBFB',
+    backgroundColor: '#2D2B33', // Slightly lighter than header for depth
   },
-  headerContainer: {
-    paddingVertical: 30,
-    paddingHorizontal: 20,
+  profileContainer: {
+    padding: 20,
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#C4D9FF',
-    backgroundColor: '#E5E7EB',
+    borderBottomColor: '#4A4754',
   },
-  logo: {
-    width: 120,  // Increased from 80 to 120
-    height: 120, // Increased from 80 to 120
-    resizeMode: 'contain',
-    marginBottom: 15, // Increased margin to balance larger logo
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#4A4754',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 8,
   },
-  brandTitle: {
-    fontSize: 24,
+  userName: {
+    color: '#FFFFFF',
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#000000',
-    marginTop: 5, // Added small margin
   },
-  brandSubtitle: {
-    color: '#000000',
+  userRole: {
+    color: '#A1A1AA',
     fontSize: 14,
-    letterSpacing: 1,
-    marginTop: 5, // Added small margin
+    marginTop: 4,
   },
   drawerList: {
     flex: 1,
-    paddingTop: 15,
-    backgroundColor: '#FBFBFB',
-  },
-  menuText: {
-    color: '#000000',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  menuItem: {
-    borderRadius: 8,
-    marginHorizontal: 10,
-    marginVertical: 2,
+    paddingTop: 10,
   },
   logoutContainer: {
-    padding: 15,
+    padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#C4D9FF',
-    backgroundColor: '#FBFBFB',
+    borderTopColor: '#4A4754',
+    backgroundColor: '#2D2B33',
   },
   logoutButton: {
-    backgroundColor: '#000000',
-    borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconLabel: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'transparent',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 8,
   },
   icon: {
-    marginRight: 10,
+    marginRight: 15,
   },
   logoutText: {
-    color: '#FFFFFF',
+    color: '#A1A1AA',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  // Logout Modal Styles
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '85%',
+    maxWidth: 320,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 8,
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#E5E7EB',
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#EF4444',
+  },
+  logoutModalButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
+    color: '#fff',
   },
 });
