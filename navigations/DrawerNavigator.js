@@ -12,8 +12,10 @@ import CustomDrawer from '../components/CustomDrawer';
 const Drawer = createDrawerNavigator();
 
 export default function DrawerNavigator({ route }) {
-  const { user } = route.params;
-  const { role } = user;
+  const params = route?.params ?? {};
+  const user = params.user ?? {};
+  const role = user.role ?? 'user';
+  const initialRoute = params.initialRouteName ?? (role === 'admin' ? 'Dashboard' : 'Scanner');
 
   const scannerComponent = (props) => <Scanner {...props} userId={user.id} />;
   const dashboardComponent = (props) => <Dashboard {...props} user={user} />;
@@ -21,6 +23,7 @@ export default function DrawerNavigator({ route }) {
 
   return (
     <Drawer.Navigator
+      initialRouteName={initialRoute}
       drawerContent={(props) => <CustomDrawer {...props} user={user} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,

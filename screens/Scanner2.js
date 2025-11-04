@@ -55,7 +55,9 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) =>
   );
 };
 
-export default function Scanner({ userId }) {
+export default function Scanner(props) {
+  const { userId: propUserId, route } = props;
+  const userId = propUserId ?? route?.params?.userId;
   const navigation = useNavigation();
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
