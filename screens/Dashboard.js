@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,13 @@ import {
   ScrollView,
   ActivityIndicator,
   TouchableOpacity,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { PieChart } from 'react-native-gifted-charts';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 import { useResponsive } from '../utils/responsive';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, withDelay, Easing, useDerivedValue, interpolate, Extrapolate } from 'react-native-reanimated';
 
@@ -99,18 +101,23 @@ const ShimmeringLoader = () => {
 const fetchInventory = async () => {
   try {
     const response = await fetch(`${API_URL}/get_inventory.php`);
+    // Check if the response is ok (status in the range 200-299)
+    if (!response.ok) {
+      // Throw an error with the status text, which can be more descriptive
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
     const data = await response.json();
     
     // Handle the new response structure
     if (data.status === 'success') {
       return data.data;
     } else {
-      console.error('Backend error:', data.message);
-      return [];
+      // Throw an error with the backend message
+      throw new Error(data.message || 'Backend returned an error status.');
     }
   } catch (e) {
-    console.error('Fetch error:', e);
-    return [];
+    // Re-throw the error to be caught by the calling function's .catch block
+    throw e;
   }
 };
 
@@ -131,16 +138,35 @@ export default function Dashboard() {
   const { isTablet } = useResponsive();
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null); // Add error state
+  const [refreshing, setRefreshing] = useState(false);
   const [focussedIndex, setFocussedIndex] = useState(-1);
 
   const animationProgress = useSharedValue(0);
 
-  useEffect(() => {
-    fetchInventory().then((data) => {
-      setInventory(data);
-      setLoading(false);
-    });
+  const loadData = useCallback(() => {
+    setError(null); // Reset error on new load attempt
+    return fetchInventory()
+      .then((data) => {
+        setInventory(data);
+      })
+      .catch((e) => {
+        setError(e.message || 'An unexpected error occurred.');
+        setInventory([]); // Clear inventory on error
+      });
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      loadData().finally(() => setLoading(false));
+    }, [loadData])
+  );
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData().finally(() => setRefreshing(false));
+  }, [loadData]);
 
   useEffect(() => {
     if (!loading) {
@@ -207,11 +233,31 @@ export default function Dashboard() {
     );
   }
 
+  if (error) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <Feather name="alert-circle" size={40} color="#D0021B" />
+        <Text style={{ marginTop: 10, fontSize: 16, color: '#D0021B', textAlign: 'center' }}>
+          Failed to load data. Please try again.
+        </Text>
+        <Text style={{ marginTop: 5, fontSize: 12, color: '#6B7280', textAlign: 'center' }}>
+          ({error})
+        </Text>
+        <TouchableOpacity onPress={loadData} style={{ marginTop: 20, backgroundColor: '#4A90E2', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
+          <Text style={{ color: '#FFFFFF', fontSize: 16 }}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView 
         contentContainerStyle={styles.scrollArea}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A90E2" />
+        }
       >
         {/* HEADER */}
         <View style={styles.headerContainer}>

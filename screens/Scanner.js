@@ -3,26 +3,27 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   TouchableOpacity,
   TextInput,
   FlatList,
   Alert,
   Switch,
-  SafeAreaView,
   ActivityIndicator,
   Modal,
   ScrollView,
   Image,
   Vibration,
   LogBox,
-  Animated
+  Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
 import { useNavigation } from '@react-navigation/native';
 import { API_URL as API_BASE_URL } from '../utils/config';
+import base64 from 'base-64';
 
 // Ignore specific warnings
 LogBox.ignoreLogs([
@@ -30,10 +31,7 @@ LogBox.ignoreLogs([
   'useInsertionEffect must not schedule updates',
 ]);
 
-const { width, height } = Dimensions.get('window');
-const isLandscape = width > height;
-
-const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) => {
+const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styles }) => {
   if (!isActive) {
     return (
       <View style={styles.cameraOffOverlay}>
@@ -51,12 +49,17 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) =>
         barcodeTypes: ['qr', 'ean13', 'upc_a', 'code128'],
       }}
       facing={cameraType}
+      testID="camera-view"
     />
   );
 };
 
 export default function Scanner({ userId }) {
   const navigation = useNavigation();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const styles = getStyles(isLandscape, width, height);
+
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraType, setCameraType] = useState('front');
@@ -366,7 +369,7 @@ export default function Scanner({ userId }) {
         try { candidate = decodeURIComponent(candidate); } catch (_) {}
         const normalized = candidate.replace(/-/g, '+').replace(/_/g, '/');
         let jsonStr;
-        try { jsonStr = atob(normalized); } catch (_) { return null; }
+        try { jsonStr = base64.decode(normalized); } catch (_) { return null; }
         try {
           const obj = JSON.parse(jsonStr);
           return obj && typeof obj === 'object' ? obj : null;
@@ -732,6 +735,7 @@ export default function Scanner({ userId }) {
               onBarcodeScanned={handleBarcodeScanned}
               cameraType={cameraType}
               scanned={scanned}
+              styles={styles}
             />
           </View>
 
@@ -849,6 +853,7 @@ export default function Scanner({ userId }) {
                   <TextInput
                     style={styles.cashInput}
                     placeholder="Enter cash amount"
+                    placeholderTextColor="#9CA3AF"
                     keyboardType="numeric"
                     value={cashTendered}
                     onChangeText={(text) => {
@@ -1042,7 +1047,7 @@ export default function Scanner({ userId }) {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isLandscape, width, height) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FBFBFB',
@@ -1756,48 +1761,131 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  permissionContainer: {
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FBFBFB',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginBottom: 20,
-    fontSize: 20,
-    color: '#3A3A3A',
-  },
-  button: {
-    backgroundColor: '#C5BAFF',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContent: {
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: 16,
     padding: 24,
     alignItems: 'center',
-    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  modalText: {
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
     marginTop: 16,
-    color: '#3A3A3A',
+    marginBottom: 8,
   },
-  listContent: {
-    flexGrow: 1,
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    marginLeft: 8,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#fff',
+    borderWidth: 3,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+  },
+  walkthroughTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  walkthroughDescription: {
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#777',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#000',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   // Receipt Modal Styles
   receiptModalOverlay: {
@@ -1919,374 +2007,131 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FBFBFB',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginBottom: 20,
-    fontSize: 20,
-    color: '#3A3A3A',
-  },
-  button: {
-    backgroundColor: '#C5BAFF',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 24,
-    alignItems: 'center',
-    elevation: 5,
-  },
-  modalText: {
-    marginTop: 16,
-    color: '#3A3A3A',
-  },
-  listContent: {
-    flexGrow: 1,
-  },
-  // Receipt Modal Styles
-  receiptModalOverlay: {
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  receiptModalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
+  logoutModalContainer: {
     width: '90%',
-    maxWidth: 400,
-    maxHeight: '80%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    marginLeft: 8,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#fff',
+    borderWidth: 3,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
     shadowRadius: 15,
     elevation: 10,
   },
-  receiptHeader: {
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 15,
-    marginBottom: 15,
-  },
-  receiptTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 10,
-  },
-  receiptDate: {
-    fontSize: 14,
-    color: '#888',
-    marginTop: 4,
-  },
-  receiptSection: {
-    marginBottom: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 15,
-  },
-  receiptSectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#555',
-    marginBottom: 10,
-  },
-  receiptItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
-  },
-  receiptItemQty: {
-    fontSize: 15,
-    color: '#888',
-    marginRight: 10,
-  },
-  receiptItemName: {
-    flex: 1,
-    fontSize: 15,
-    color: '#333',
-  },
-  receiptItemTotal: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#333',
-    marginLeft: 10,
-  },
-  receiptTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  receiptTotalLabel: {
-    fontSize: 16,
-    color: '#666',
-  },
-  receiptTotalValue: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-  },
-  receiptGrandTotal: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  receiptGrandTotalLabel: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  receiptGrandTotalValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  receiptFooter: {
-    textAlign: 'center',
-    fontSize: 14,
-    color: '#888',
-    marginTop: 10,
-  },
-  receiptCloseButton: {
-    backgroundColor: '#000',
-    borderRadius: 8,
-    paddingVertical: 15,
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  receiptCloseButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FBFBFB',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginBottom: 20,
-    fontSize: 20,
-    color: '#3A3A3A',
-  },
-  button: {
-    backgroundColor: '#C5BAFF',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalOverlay: {
+  walkthroughContainer: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 24,
-    alignItems: 'center',
-    elevation: 5,
-  },
-  modalText: {
-    marginTop: 16,
-    color: '#3A3A3A',
-  },
-  listContent: {
-    flexGrow: 1,
-  },
-  // Receipt Modal Styles
-  receiptModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  receiptModalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
+    borderRadius: 12,
     padding: 20,
-    width: '90%',
-    maxWidth: 400,
-    maxHeight: '80%',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 15,
+    shadowRadius: 8,
     elevation: 10,
   },
-  receiptHeader: {
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 15,
-    marginBottom: 15,
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
   },
-  receiptTitle: {
-    fontSize: 24,
+  walkthroughTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
-    marginTop: 10,
-  },
-  receiptDate: {
-    fontSize: 14,
-    color: '#888',
-    marginTop: 4,
-  },
-  receiptSection: {
-    marginBottom: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 15,
-  },
-  receiptSectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#555',
     marginBottom: 10,
   },
-  receiptItem: {
+  walkthroughDescription: {
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  walkthroughActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 5,
   },
-  receiptItemQty: {
-    fontSize: 15,
-    color: '#888',
-    marginRight: 10,
-  },
-  receiptItemName: {
-    flex: 1,
-    fontSize: 15,
-    color: '#333',
-  },
-  receiptItemTotal: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#333',
-    marginLeft: 10,
-  },
-  receiptTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-   },
-  receiptTotalLabel: {
+  walkthroughSkipText: {
     fontSize: 16,
-    color: '#666',
+    color: '#777',
   },
-  receiptTotalValue: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-  },
-  receiptGrandTotal: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  receiptGrandTotalLabel: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  receiptGrandTotalValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  receiptFooter: {
-    textAlign: 'center',
-    fontSize: 14,
-    color: '#888',
-    marginTop: 10,
-  },
-  receiptCloseButton: {
+  walkthroughNextButton: {
     backgroundColor: '#000',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     borderRadius: 8,
-    paddingVertical: 15,
-    marginTop: 20,
-    alignItems: 'center',
   },
-  receiptCloseButtonText: {
+  walkthroughNextButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-  },
-  permissionContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FBFBFB',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginBottom: 20,
-    fontSize: 20,
-    color: '#3A3A3A',
-  },
-  button: {
-    backgroundColor: '#C5BAFF',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 24,
-    alignItems: 'center',
-    elevation: 5,
-  },
-  modalText: {
-    marginTop: 16,
-    color: '#3A3A3A',
-  },
-  listContent: {
-    flexGrow: 1,
   },
   // Receipt Modal Styles
   receiptModalOverlay: {

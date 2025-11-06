@@ -78,7 +78,7 @@ export default function Inventory() {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#007BFF" style={{ flex: 1 }} />
+        <ActivityIndicator testID="loading-indicator" size="large" color="#007BFF" style={{ flex: 1 }} />
       ) : (
         <Animated.View style={[styles.tableContainer, { opacity: fadeAnim }]}>
           {renderHeader()}

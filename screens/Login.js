@@ -1,3 +1,4 @@
+'use strict';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
@@ -10,7 +11,7 @@ import {
   View,
   Animated,
   PanResponder,
-  Dimensions,
+  useWindowDimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -22,13 +23,195 @@ import { useNavigation } from '@react-navigation/native';
 
 import { API_URL } from '../utils/config';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const IS_LANDSCAPE = SCREEN_WIDTH > SCREEN_HEIGHT;
-const CARD_MAX_WIDTH = IS_LANDSCAPE ? Math.min(640, SCREEN_WIDTH * 0.55) : 620;
-const BRAND_ROW_WIDTH = CARD_MAX_WIDTH;
-const LOGO_SIZE = IS_LANDSCAPE ? Math.min(140, SCREEN_HEIGHT * 0.28) : SCREEN_WIDTH * 0.18;
+const getStyles = (width, height) => {
+  const IS_LANDSCAPE = width > height;
+  const CARD_MAX_WIDTH = IS_LANDSCAPE ? Math.min(640, width * 0.55) : 620;
+  const BRAND_ROW_WIDTH = CARD_MAX_WIDTH;
+  const LOGO_SIZE = IS_LANDSCAPE ? Math.min(140, height * 0.28) : width * 0.18;
+
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: '#F7F8FA', // A slightly off-white background
+    },
+    keyboardAvoidingView: {
+      flex: 1,
+    },
+    scrollViewContent: {
+      flexGrow: 1,
+      justifyContent: 'center', // Center content vertically
+      paddingVertical: 20,
+    },
+    container: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 24,
+    },
+    centerWrapper: {
+      width: '100%',
+      maxWidth: CARD_MAX_WIDTH,
+      alignItems: 'center',
+    },
+    brandingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center', // Center the logo and title
+      gap: 16,
+      marginBottom: 24,
+    },
+    brandingTextCol: {
+      justifyContent: 'center',
+    },
+    brandTitle: {
+      fontSize: width * 0.07, // Larger title
+      fontWeight: 'bold',
+      color: '#1A202C',
+    },
+    brandSubtitle: {
+      color: '#4A5568',
+      fontSize: width * 0.03,
+      letterSpacing: 1.5, // More spacing
+      fontWeight: '500',
+    },
+    logo: {
+      width: LOGO_SIZE,
+      height: LOGO_SIZE,
+      resizeMode: 'contain',
+    },
+    card: {
+      width: '92%',
+      maxWidth: CARD_MAX_WIDTH,
+      backgroundColor: '#E5E7EB',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: '#D3DAD9',
+      padding: 18,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 12,
+      elevation: 5,
+    },
+    welcomeTitle: {
+      fontSize: width * 0.065,
+      textAlign: 'center',
+      fontWeight: '700',
+      color: '#37353E',
+      marginTop: 4,
+    },
+    welcomeSubtitle: {
+      textAlign: 'center',
+      color: '#6B7280',
+      marginTop: 8,
+      marginBottom: 16,
+    },
+    label: {
+      color: '#3A3A3A',
+      fontSize: width * 0.035,
+      marginBottom: 5,
+      marginTop: 20,
+      fontWeight: 'bold',
+    },
+    inputWrapper: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#F5F7FA',
+      borderRadius: 10,
+      paddingHorizontal: 15,
+      paddingVertical: 12,
+      justifyContent: 'space-between',
+      borderWidth: 1,
+      borderColor: '#D3DAD9',
+      marginTop: 10,
+    },
+    inputError: {
+      borderColor: '#FF6B6B',
+    },
+    errorText: {
+      color: '#FF6B6B',
+      fontSize: width * 0.03,
+      marginTop: 6,
+      marginLeft: 4,
+    },
+    input: {
+      flex: 1,
+      fontSize: width * 0.04,
+      color: '#2A2A2A',
+    },
+    forgotPassword: {
+      textAlign: 'right',
+      marginTop: 10,
+      color: '#715A5A',
+      fontSize: width * 0.035,
+      fontWeight: '500',
+    },
+    loginButton: {
+      backgroundColor: '#000000',
+      paddingVertical: 15,
+      borderRadius: 30,
+      alignItems: 'center',
+      marginTop: 30,
+      elevation: 3,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 3,
+    },
+    disabledButton: {
+      backgroundColor: '#44444E',
+      opacity: 0.7,
+    },
+    notify: {
+      position: 'absolute',
+      top: 8,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    notifyText: {
+      backgroundColor: 'rgba(0,0,0,0.85)',
+      color: '#FFFFFF',
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      borderRadius: 16,
+      overflow: 'hidden',
+      fontWeight: '600',
+    },
+    loginButtonText: {
+      color: '#FFFFFF',
+      fontSize: width * 0.045,
+      fontWeight: 'bold',
+    },
+    brandingContainer: {
+      alignItems: 'center',
+      marginTop: 20,
+      marginBottom: 10,
+    },
+    strengthMeter: {
+      flexDirection: 'row',
+      marginTop: 10,
+      height: 4,
+      width: '100%',
+      justifyContent: 'space-between',
+    },
+    strengthBar: {
+      flex: 1,
+      height: 4,
+      backgroundColor: '#E0E0E0',
+      marginHorizontal: 2,
+      borderRadius: 2,
+    },
+    strengthBarActive: {
+      backgroundColor: '#FFC107',
+    },
+  });
+}
 
 export default function Login() {
+  const { width, height } = useWindowDimensions();
+  const styles = getStyles(width, height);
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -88,7 +271,7 @@ export default function Login() {
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dy > 120) {
           Animated.timing(slideAnim, {
-            toValue: SCREEN_HEIGHT,
+            toValue: height,
             duration: 300,
             useNativeDriver: true,
           }).start(() => {
@@ -171,7 +354,7 @@ export default function Login() {
 
         console.log('Login success. User data:', user);
         
-        // Navigate based on user role
+        // Navigate based on user role (restored logic)
         if (user.role === 'user') {
           navigation.reset({
             index: 0,
@@ -319,215 +502,3 @@ export default function Login() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F7F8FA', // A slightly off-white background
-  },
-  keyboardAvoidingView: {
-    flex: 1,
-  },
-  scrollViewContent: {
-    flexGrow: 1,
-    justifyContent: 'center', // Center content vertically
-    paddingVertical: 20,
-  },
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  centerWrapper: {
-    width: '100%',
-    maxWidth: CARD_MAX_WIDTH,
-    alignItems: 'center',
-  },
-  brandingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center', // Center the logo and title
-    gap: 16,
-    marginBottom: 24,
-  },
-  brandingTextCol: {
-    justifyContent: 'center',
-  },
-  brandTitle: {
-    fontSize: SCREEN_WIDTH * 0.07, // Larger title
-    fontWeight: 'bold',
-    color: '#1A202C',
-  },
-  brandSubtitle: {
-    color: '#4A5568',
-    fontSize: SCREEN_WIDTH * 0.03,
-    letterSpacing: 1.5, // More spacing
-    fontWeight: '500',
-  },
-  logo: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-    resizeMode: 'contain',
-  },
-  card: {
-    width: '92%',
-    maxWidth: CARD_MAX_WIDTH,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#D3DAD9',
-    padding: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  welcomeTitle: {
-    fontSize: SCREEN_WIDTH * 0.065,
-    textAlign: 'center',
-    fontWeight: '700',
-    color: '#37353E',
-    marginTop: 4,
-  },
-  welcomeSubtitle: {
-    textAlign: 'center',
-    color: '#6B7280',
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  label: {
-    color: '#3A3A3A',
-    fontSize: SCREEN_WIDTH * 0.035,
-    marginBottom: 5,
-    marginTop: 20,
-    fontWeight: 'bold',
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F7FA',
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#D3DAD9',
-    marginTop: 10,
-  },
-  inputError: {
-    borderColor: '#FF6B6B',
-  },
-  errorText: {
-    color: '#FF6B6B',
-    fontSize: SCREEN_WIDTH * 0.03,
-    marginTop: 6,
-    marginLeft: 4,
-  },
-  input: {
-    flex: 1,
-    fontSize: SCREEN_WIDTH * 0.04,
-    color: '#2A2A2A',
-  },
-  forgotPassword: {
-    textAlign: 'right',
-    marginTop: 10,
-    color: '#715A5A',
-    fontSize: SCREEN_WIDTH * 0.035,
-    fontWeight: '500',
-  },
-  loginButton: {
-    backgroundColor: '#000000',
-    paddingVertical: 15,
-    borderRadius: 30,
-    alignItems: 'center',
-    marginTop: 30,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-  },
-  disabledButton: {
-    backgroundColor: '#44444E',
-    opacity: 0.7,
-  },
-  notify: {
-    position: 'absolute',
-    top: 8,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifyText: {
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    color: '#FFFFFF',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-    fontWeight: '600',
-  },
-  loginButtonText: {
-    color: '#FFFFFF',
-    fontSize: SCREEN_WIDTH * 0.045,
-    fontWeight: 'bold',
-  },
-  brandingContainer: {
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  brandingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: 12,
-    width: '92%',
-    maxWidth: BRAND_ROW_WIDTH,
-    alignSelf: 'center',
-    marginBottom: 4,
-    backgroundColor: 'transparent',
-    borderRadius: 0,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-  },
-  brandingTextCol: {
-    justifyContent: 'center',
-  },
-  brandTitle: {
-    fontSize: SCREEN_WIDTH * 0.045,
-    fontWeight: 'bold',
-    color: '#37353E',
-    marginTop: 10,
-  },
-  brandSubtitle: {
-    color: '#44444E',
-    fontSize: SCREEN_WIDTH * 0.035,
-    letterSpacing: 1,
-  },
-  logo: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-    resizeMode: 'contain',
-  },
-  strengthMeter: {
-    flexDirection: 'row',
-    marginTop: 10,
-    height: 4,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  strengthBar: {
-    flex: 1,
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    marginHorizontal: 2,
-    borderRadius: 2,
-  },
-  strengthBarActive: {
-    backgroundColor: '#FFC107',
-  },
-});

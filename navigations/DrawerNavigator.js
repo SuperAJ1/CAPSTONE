@@ -4,18 +4,18 @@ import { TouchableOpacity, View, Image, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRoute } from '@react-navigation/native';
 
+
 import Dashboard from '../screens/Dashboard';
 import Scanner from '../screens/Scanner';
 import Inventory from '../screens/Inventory';
+import TransactionsScreen from '../screens/TransactionsScreen';
 import CustomDrawer from '../components/CustomDrawer';
 
 const Drawer = createDrawerNavigator();
 
 export default function DrawerNavigator({ route }) {
-  const params = route?.params ?? {};
-  const user = params.user ?? {};
-  const role = user.role ?? 'user';
-  const initialRoute = params.initialRouteName ?? (role === 'admin' ? 'Dashboard' : 'Scanner');
+  const { user } = route.params;
+  const { role } = user;
 
   const scannerComponent = (props) => <Scanner {...props} userId={user.id} />;
   const dashboardComponent = (props) => <Dashboard {...props} user={user} />;
@@ -23,7 +23,6 @@ export default function DrawerNavigator({ route }) {
 
   return (
     <Drawer.Navigator
-      initialRouteName={initialRoute}
       drawerContent={(props) => <CustomDrawer {...props} user={user} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,
@@ -61,6 +60,7 @@ export default function DrawerNavigator({ route }) {
         },
       })}
     >
+
       {role === 'admin' && (
         <>
           <Drawer.Screen
@@ -81,18 +81,40 @@ export default function DrawerNavigator({ route }) {
               ),
             }}
           />
+          <Drawer.Screen
+            name="Scanner"
+            component={scannerComponent}
+            options={{
+              drawerIcon: ({ color, size }) => (
+                <Feather name="camera" color={color} size={size} />
+              ),
+            }}
+          />
+          <Drawer.Screen
+            name="Transactions"
+            component={TransactionsScreen}
+            options={{
+              drawerIcon: ({ color, size }) => (
+                <Feather name="list" color={color} size={size} />
+              ),
+              title: 'Transactions',
+            }}
+          />
         </>
       )}
 
-      <Drawer.Screen
-        name="Scanner"
-        component={scannerComponent}
-        options={{
-          drawerIcon: ({ color, size }) => (
-            <Feather name="camera" color={color} size={size} />
-          ),
-        }}
-      />
+      {role !== 'admin' && (
+        <Drawer.Screen
+          name="Scanner"
+          component={scannerComponent}
+          options={{
+            drawerIcon: ({ color, size }) => (
+              <Feather name="camera" color={color} size={size} />
+            ),
+          }}
+        />
+      )}
+
     </Drawer.Navigator>
   );
 }

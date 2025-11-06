@@ -3,26 +3,28 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   TouchableOpacity,
   TextInput,
   FlatList,
   Alert,
   Switch,
-  SafeAreaView,
   ActivityIndicator,
   Modal,
   ScrollView,
   Image,
   Vibration,
   LogBox,
-  Animated
+  Animated,
+  Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
 import { useNavigation } from '@react-navigation/native';
 import { API_URL as API_BASE_URL } from '../utils/config';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Ignore specific warnings
 LogBox.ignoreLogs([
@@ -30,10 +32,7 @@ LogBox.ignoreLogs([
   'useInsertionEffect must not schedule updates',
 ]);
 
-const { width, height } = Dimensions.get('window');
-const isLandscape = width > height;
-
-const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) => {
+const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styles }) => {
   if (!isActive) {
     return (
       <View style={styles.cameraOffOverlay}>
@@ -51,14 +50,41 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned }) =>
         barcodeTypes: ['qr', 'ean13', 'upc_a', 'code128'],
       }}
       facing={cameraType}
+      testID="camera-view-2"
     />
   );
 };
 
-export default function Scanner(props) {
+export default function Scanner2(props) {
   const { userId: propUserId, route } = props;
+  // Animated value for settings icon rotation
+  const settingsRotateAnim = useRef(new Animated.Value(0)).current;
+  const [showSettingsLabel, setShowSettingsLabel] = useState(false);
+
+  const handleSettingsPress = () => {
+    // Start rotation animation
+    Animated.sequence([
+      Animated.timing(settingsRotateAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      Animated.timing(settingsRotateAnim, {
+        toValue: 0,
+        duration: 0,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setShowSettingsLabel(true);
+    setTimeout(() => setShowSettingsLabel(false), 1800);
+    handleSettings();
+  };
+
   const userId = propUserId ?? route?.params?.userId;
   const navigation = useNavigation();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const styles = getStyles(isLandscape, width, height);
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraType, setCameraType] = useState('front');
@@ -93,6 +119,52 @@ export default function Scanner(props) {
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
   const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
   const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
+  // Previous Transactions Modal State
+  const [isTransactionsModalVisible, setIsTransactionsModalVisible] = useState(false);
+  // --- PATCH: Fetch previous transactions from backend when modal opens ---
+  const [previousTransactions, setPreviousTransactions] = useState([]);
+  const [isTransactionsLoading, setIsTransactionsLoading] = useState(false);
+  const [transactionsError, setTransactionsError] = useState("");
+
+  const fetchPreviousTransactions = useCallback(async () => {
+    setIsTransactionsLoading(true);
+    setTransactionsError("");
+    try {
+      console.log('Fetching previous transactions...');
+      const response = await fetch(`${API_BASE_URL}/transactions.php?user_id=${userId ?? ''}`);
+      console.log('Transactions response status:', response.status);
+      const responseText = await response.text();
+      console.log('Raw transactions response:', responseText);
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error('JSON parse error:', e);
+        setPreviousTransactions([]);
+        setTransactionsError('Server returned invalid JSON');
+        return;
+      }
+      if (data.status === 'success' && Array.isArray(data.data)) {
+        setPreviousTransactions(data.data);
+      } else {
+        setPreviousTransactions([]);
+        setTransactionsError(data.message || 'Failed to fetch transactions');
+      }
+    } catch (error) {
+      console.error('Fetch error:', error);
+      setPreviousTransactions([]);
+      setTransactionsError('Failed to connect to server');
+    } finally {
+      setIsTransactionsLoading(false);
+    }
+  }, [API_BASE_URL, userId]);
+
+  useEffect(() => {
+    if (isTransactionsModalVisible) {
+      fetchPreviousTransactions();
+    }
+  }, [isTransactionsModalVisible, fetchPreviousTransactions]);
+  // --- END PATCH ---
 
   // Element Layouts for Walkthrough
   const [elementLayouts, setElementLayouts] = useState({});
@@ -530,6 +602,7 @@ export default function Scanner(props) {
 
   // Purchase completion handler
   const executePurchase = useCallback(async () => {
+  console.log('executePurchase called');
     if (scannedItems.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
       return;
@@ -582,6 +655,10 @@ export default function Scanner(props) {
         body: JSON.stringify(payload)
       });
 
+      // Log response status and headers
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+
       const responseText = await response.text();
       console.log('Raw response:', responseText);
 
@@ -589,10 +666,12 @@ export default function Scanner(props) {
       try {
         result = JSON.parse(responseText);
       } catch (e) {
+        console.error('JSON parse error:', e);
         throw new Error(`Server returned invalid JSON. Response: ${responseText.substring(0, 200)}...`);
       }
 
       if (!response.ok || result.status !== 'success') {
+        console.error('API error:', result.message);
         throw new Error(result.message || 'Purchase failed on server side.');
       }
 
@@ -625,6 +704,7 @@ export default function Scanner(props) {
   }, [scannedItems, globalDiscount, cashTendered, total, clearCart, change, numericCashTendered, playBeep, fetchProducts, searchQuery]);
 
   const handleCompletePurchase = useCallback(() => {
+  console.log('handleCompletePurchase called');
     if (scannedItems.length === 0) {
       Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
       return;
@@ -938,14 +1018,19 @@ export default function Scanner(props) {
       </Modal>
     );
   };
-
+  
   const renderReceiptModal = () => {
     if (!isReceiptVisible || !receiptDetails) {
       return null;
     }
 
-
-    const { items, total, change, cashTendered, globalDiscount, subtotal } = receiptDetails;
+    // Robust extraction for items and fields
+    const items = receiptDetails.items || receiptDetails.Items || [];
+    const total = receiptDetails.total ?? receiptDetails.Total;
+    const change = receiptDetails.change ?? receiptDetails.Change;
+    const cashTendered = receiptDetails.cashTendered ?? receiptDetails.CashTendered ?? receiptDetails.cash_tendered;
+    const globalDiscount = receiptDetails.globalDiscount ?? receiptDetails.GlobalDiscount ?? receiptDetails.global_discount;
+    const subtotal = receiptDetails.subtotal ?? receiptDetails.Subtotal;
 
     return (
       <Modal
@@ -970,40 +1055,48 @@ export default function Scanner(props) {
 
               <View style={styles.receiptSection}>
                 <Text style={styles.receiptSectionTitle}>Summary</Text>
-                {items.map(item => (
-                  <View key={item.id} style={styles.receiptItem}>
+                {Array.isArray(items) && items.length > 0 ? items.map(item => (
+                  <View key={item.id || item.name || Math.random()} style={styles.receiptItem}>
                     <Text style={styles.receiptItemQty}>{item.qty}x</Text>
-                    <Text style={styles.receiptItemName} numberOfLines={1}>{item.product.name}</Text>
-                    <Text style={styles.receiptItemTotal}>₽{(item.product.price * item.qty * (1 - item.discount / 100)).toFixed(2)}</Text>
+                    <Text style={styles.receiptItemName} numberOfLines={1}>{item.product?.name || item.name || item.ProductName || 'Unnamed'}</Text>
+                    <Text style={styles.receiptItemTotal}>₽{((item.product?.price ?? item.price ?? item.Price ?? 0) * item.qty * (1 - (item.discount ?? item.Discount ?? 0) / 100)).toFixed(2)}</Text>
                   </View>
-                ))}
+                )) : (
+                  <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>
+                )}
               </View>
 
               <View style={styles.receiptSection}>
                 <View style={styles.receiptTotalRow}>
                   <Text style={styles.receiptTotalLabel}>Subtotal</Text>
-                  <Text style={styles.receiptTotalValue}>₽{subtotal.toFixed(2)}</Text>
+                  <Text style={styles.receiptTotalValue}>₽{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
                 </View>
                 <View style={styles.receiptTotalRow}>
                   <Text style={styles.receiptTotalLabel}>Discount</Text>
                   <Text style={styles.receiptTotalValue}>{globalDiscount > 0 ? `${globalDiscount}%` : 'N/A'}</Text>
                 </View>
                 <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
-                  <Text style={styles.receiptGrandTotalLabel}>Total</Text>
-                  <Text style={styles.receiptGrandTotalValue}>₽{total.toFixed(2)}</Text>
+                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
+                  <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
                 </View>
               </View>
 
-              <View style={styles.receiptSection}>
-                <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
-                  <Text style={styles.receiptTotalValue}>₽{cashTendered.toFixed(2)}</Text>
+              {(cashTendered !== undefined || change !== undefined) && (
+                <View style={styles.receiptSection}>
+                  {cashTendered !== undefined && (
+                    <View style={styles.receiptTotalRow}>
+                      <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
+                      <Text style={styles.receiptTotalValue}>₽{Number(cashTendered).toFixed(2)}</Text>
+                    </View>
+                  )}
+                  {change !== undefined && (
+                    <View style={styles.receiptTotalRow}>
+                      <Text style={styles.receiptTotalLabel}>Change Due</Text>
+                      <Text style={styles.receiptTotalValue}>₽{Number(change).toFixed(2)}</Text>
+                    </View>
+                  )}
                 </View>
-                <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Change Due</Text>
-                  <Text style={styles.receiptTotalValue}>₽{change.toFixed(2)}</Text>
-                </View>
-              </View>
+              )}
 
               <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
             </ScrollView>
@@ -1058,6 +1151,289 @@ export default function Scanner(props) {
     </Modal>
   );
 
+  // PATCH: Update modal to show loading and error states, and accept new props
+  function RenderTransactionsModal({ isVisible, onClose, previousTransactions, isLoading, error }) {
+    const [selectedTx, setSelectedTx] = useState(null);
+
+    // Transaction details modal
+    const renderDetailsModal = () => {
+  if (!selectedTx) return null;
+  // Debug: log selected transaction object
+  console.log('SelectedTx:', selectedTx);
+      // Extract details robustly
+      const items = selectedTx.items || selectedTx.Items || [];
+      const total = selectedTx.total ?? selectedTx.Total;
+  const change = selectedTx.change_due ?? selectedTx.change ?? selectedTx.Change;
+  const cashTendered = selectedTx.cash_tendered ?? selectedTx.cashTendered ?? selectedTx.CashTendered;
+      const globalDiscount = selectedTx.globalDiscount ?? selectedTx.GlobalDiscount ?? selectedTx.global_discount;
+      const subtotal = selectedTx.subtotal ?? selectedTx.Subtotal;
+      const date = selectedTx.date ?? selectedTx.Date;
+      return (
+        <Modal
+          animationType="fade"
+          transparent={true}
+          visible={!!selectedTx}
+          onRequestClose={() => setSelectedTx(null)}
+        >
+          <View style={modalStyles.overlay}>
+            <View style={[modalStyles.container, {paddingVertical: 24, paddingHorizontal: 16, maxHeight: '80%'}]}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={{alignItems: 'center', marginBottom: 12}}>
+                  <Ionicons name="checkmark-circle" size={50} color="#7C3AED" />
+                  <Text style={[modalStyles.title, {marginBottom: 2}]}>Transaction Details</Text>
+                  <Text style={{fontSize: 16, color: '#37353E', fontWeight: '500', marginBottom: 8}}>{date}</Text>
+                </View>
+
+                <View style={styles.receiptSection}>
+                  <Text style={styles.receiptSectionTitle}>Summary</Text>
+                  {Array.isArray(items) && items.length > 0 ? items.map(item => (
+                    <View key={item.name + item.quantity} style={styles.receiptItem}>
+                      <Text style={styles.receiptItemQty}>{item.quantity}x</Text>
+                      <Text style={styles.receiptItemName} numberOfLines={1}>{item.name}</Text>
+                      <Text style={styles.receiptItemTotal}>
+                        ₽{(item.price_each * item.quantity * (1 - (item.discount_percent || 0))).toFixed(2)}
+                      </Text>
+                    </View>
+                  )) : (
+                    <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>
+                  )}
+                </View>
+
+                <View style={styles.receiptSection}>
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Subtotal</Text>
+                    <Text style={styles.receiptTotalValue}>₽{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
+                  </View>
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Discount</Text>
+                    <Text style={styles.receiptTotalValue}>{globalDiscount > 0 ? `${globalDiscount}%` : 'N/A'}</Text>
+                  </View>
+                  <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
+                    <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
+                    <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.receiptSection}>
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
+                    <Text style={styles.receiptTotalValue}>₽{cashTendered !== undefined ? Number(cashTendered).toFixed(2) : '-'}</Text>
+                  </View>
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Change Due</Text>
+                    <Text style={styles.receiptTotalValue}>₽{Number(selectedTx.change_due ?? 0).toFixed(2)}</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
+              </ScrollView>
+              <TouchableOpacity
+                style={modalStyles.closeButton}
+                onPress={() => setSelectedTx(null)}
+              >
+                <Text style={modalStyles.closeButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      );
+    };
+    // PATCH: Add date range filter state
+    const [startDate, setStartDate] = useState(null);
+    const [endDate, setEndDate] = useState(null);
+    const [showStartPicker, setShowStartPicker] = useState(false);
+    const [showEndPicker, setShowEndPicker] = useState(false);
+
+    // Filter transactions by date range
+    const filteredTransactions = previousTransactions.filter(tx => {
+      if (!startDate && !endDate) return true;
+      const txDate = new Date(tx.date);
+      if (startDate && txDate < startDate) return false;
+      if (endDate && txDate > endDate) return false;
+      return true;
+    });
+
+    // Styles for modal
+    const modalStyles = StyleSheet.create({
+      overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(55,53,62,0.55)',
+        justifyContent: 'center',
+        alignItems: 'center',
+      },
+      container: {
+        backgroundColor: '#fff',
+        borderRadius: 18,
+        paddingVertical: 32,
+        paddingHorizontal: 20,
+        width: '88%',
+        maxHeight: '75%',
+        shadowColor: '#37353E',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.18,
+        shadowRadius: 16,
+        elevation: 12,
+        alignItems: 'center',
+      },
+      title: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#37353E',
+        marginBottom: 18,
+        textAlign: 'center',
+        letterSpacing: 0.5,
+      },
+      filterRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 18,
+        width: '100%',
+      },
+      filterButton: {
+        flex: 1,
+        marginHorizontal: 6,
+        paddingVertical: 10,
+        backgroundColor: '#F3F0FF',
+        borderRadius: 8,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+      },
+      filterText: {
+        fontSize: 15,
+        color: '#37353E',
+        fontWeight: '500',
+      },
+      scrollView: {
+        maxHeight: 320,
+        width: '100%',
+        marginBottom: 8,
+      },
+      transactionRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 14,
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F0FF',
+      },
+      transactionDate: {
+        fontSize: 16,
+        color: '#37353E',
+        fontWeight: '500',
+      },
+      transactionAmount: {
+        fontSize: 17,
+        color: '#7C3AED',
+        fontWeight: 'bold',
+      },
+      emptyText: {
+        textAlign: 'center',
+        color: '#888',
+        fontSize: 16,
+        marginVertical: 24,
+      },
+      errorText: {
+        color: '#B00020',
+        textAlign: 'center',
+        fontSize: 16,
+        marginVertical: 18,
+      },
+      closeButton: {
+        marginTop: 22,
+        alignSelf: 'center',
+        backgroundColor: '#7C3AED',
+        borderRadius: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 36,
+        shadowColor: '#7C3AED',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.18,
+        shadowRadius: 4,
+        elevation: 4,
+      },
+      closeButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 18,
+        letterSpacing: 0.5,
+      },
+    });
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isVisible}
+        onRequestClose={onClose}
+      >
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>Previous Transactions</Text>
+            {/* Date Range Picker UI */}
+            <View style={modalStyles.filterRow}>
+              <TouchableOpacity onPress={() => setShowStartPicker(true)} style={modalStyles.filterButton}>
+                <Text style={modalStyles.filterText}>Start Date: {startDate ? startDate.toLocaleDateString() : 'Select'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowEndPicker(true)} style={modalStyles.filterButton}>
+                <Text style={modalStyles.filterText}>End Date: {endDate ? endDate.toLocaleDateString() : 'Select'}</Text>
+              </TouchableOpacity>
+            </View>
+            {showStartPicker && (
+              <DateTimePicker
+                value={startDate || new Date()}
+                mode="date"
+                display="default"
+                onChange={(event, date) => {
+                  setShowStartPicker(false);
+                  if (date) setStartDate(date);
+                }}
+              />
+            )}
+            {showEndPicker && (
+              <DateTimePicker
+                value={endDate || new Date()}
+                mode="date"
+                display="default"
+                onChange={(event, date) => {
+                  setShowEndPicker(false);
+                  if (date) setEndDate(date);
+                }}
+              />
+            )}
+            {/* Transaction List */}
+            {isLoading ? (
+              <ActivityIndicator size="large" color="#7C3AED" style={{ marginVertical: 32 }} />
+            ) : error ? (
+              <Text style={modalStyles.errorText}>{error}</Text>
+            ) : filteredTransactions.length === 0 ? (
+              <Text style={modalStyles.emptyText}>No previous transactions found.</Text>
+            ) : (
+              <ScrollView style={modalStyles.scrollView}>
+                {filteredTransactions.map(tx => (
+                  <TouchableOpacity key={tx.id} style={modalStyles.transactionRow} activeOpacity={0.7} onPress={() => setSelectedTx(tx)}>
+                    <Text style={modalStyles.transactionDate}>Date: {tx.date}</Text>
+                    <Text style={modalStyles.transactionAmount}>₽{tx.total ? Number(tx.total).toFixed(2) : '0.00'}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+            {renderDetailsModal()}
+            <TouchableOpacity
+              style={modalStyles.closeButton}
+              onPress={onClose}
+            >
+              <Text style={modalStyles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+  // END PATCH
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={{ flex: 1 }}>
@@ -1077,6 +1453,7 @@ export default function Scanner(props) {
               onBarcodeScanned={handleBarcodeScanned}
               cameraType={cameraType}
               scanned={scanned}
+              styles={styles}
             />
           </View>
 
@@ -1099,18 +1476,47 @@ export default function Scanner(props) {
           </View>
 
           <View style={styles.bottomContentContainer}>
-            <View style={styles.settingsContainer}>
-              <TouchableOpacity
-                style={styles.settingsButton}
-                onPress={handleSettings}
-                accessibilityLabel="Settings"
-              >
-                <Ionicons name="settings-outline" size={16} color="#344054" />
-                <Text style={styles.settingsButtonText}>Settings</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.logoContainer}>
-              <Image source={require('../assets/logo3.png')} style={styles.logo} />
+            <View style={{ alignItems: 'center', width: '100%' }}>
+              <View style={{ flexDirection: 'row', width: '100%', alignItems: 'flex-start', justifyContent: 'flex-start' }}>
+                <View style={styles.settingsContainer}>
+                  <TouchableOpacity
+                    style={styles.settingsButton}
+                    onPress={handleSettingsPress}
+                    accessibilityLabel="Settings"
+                    activeOpacity={0.7}
+                  >
+                    <Animated.View style={{
+                      transform: [{
+                        rotate: settingsRotateAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', '360deg'],
+                        })
+                      }],
+                    }}>
+                      <Ionicons name="settings-outline" size={28} color="#344054" />
+                    </Animated.View>
+                    {showSettingsLabel && (
+                      <Animated.Text style={styles.settingsButtonText}>
+                        Settings
+                      </Animated.Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+                <View style={[styles.transactionsContainer, { marginLeft: 150 }]}> 
+                  <TouchableOpacity
+                    style={styles.transactionsButton}
+                    onPress={() => setIsTransactionsModalVisible(true)}
+                    accessibilityLabel="Previous Transactions"
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="list-outline" size={28} color="#7C3AED" />
+                  </TouchableOpacity>
+                </View>
+
+              </View>
+              <View style={styles.logoContainer}>
+                <Image source={require('../assets/logo3.png')} style={styles.logo} />
+              </View>
             </View>
           </View>
         </View>
@@ -1194,7 +1600,7 @@ export default function Scanner(props) {
                   />
                 </View>
                 <View style={[styles.totalRow, styles.grandTotal]}>
-                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total:</Text>
+                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
                   <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total.toFixed(2)}</Text>
                 </View>
               </View>
@@ -1205,6 +1611,7 @@ export default function Scanner(props) {
                   <TextInput
                     style={styles.cashInput}
                     placeholder="Enter cash amount"
+                    placeholderTextColor="#9CA3AF"
                     keyboardType="numeric"
                     value={cashTendered}
                     onChangeText={(text) => {
@@ -1398,11 +1805,18 @@ export default function Scanner(props) {
       {renderWalkthroughModal()}
       {renderLogoutConfirmationModal()}
       {renderConfirmationModal()}
+      <RenderTransactionsModal
+        isVisible={isTransactionsModalVisible}
+        onClose={() => setIsTransactionsModalVisible(false)}
+        previousTransactions={previousTransactions}
+        isLoading={isTransactionsLoading}
+        error={transactionsError}
+      />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isLandscape, width, height) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FBFBFB',
@@ -1823,7 +2237,7 @@ const styles = StyleSheet.create({
   grandTotal: {
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
-    paddingTop: 12,
+    paddingTop: 10,
     marginTop: 8,
   },
   totalLabel: {
@@ -1862,6 +2276,7 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 12,
   },
   logo: {
     width: 180,
@@ -1870,8 +2285,9 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   settingsContainer: {
-    alignItems: 'flex-end',
-    marginBottom: 10,
+    alignItems: 'center',
+    marginBottom: 0,
+    marginRight: 12,
   },
   settingsButton: {
     flexDirection: 'row',
@@ -1894,6 +2310,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 6,
     fontSize: 12,
+  },
+  transactionsContainer: {
+    alignItems: 'center',
+    marginBottom: 0,
+    marginRight: 0,
+    marginLeft: 8,
+  },
+  transactionsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+    marginLeft: 8,
+  },
+  transactionsButtonText: {
+    color: '#7C3AED',
+    fontWeight: '600',
+    marginLeft: 6,
+    fontSize: 13,
   },
   settingsModalOverlay: {
     flex: 1,
@@ -1930,19 +2375,32 @@ const styles = StyleSheet.create({
   settingsModalButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    marginBottom: 12,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 8,
+    marginLeft: 8,
+    position: 'relative',
+       overflow: 'visible',
   },
-  settingsModalButtonTextBox: {
-    marginLeft: 15,
-  },
-  settingsModalButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+  settingsButtonText: {
+    marginLeft: 8,
     color: '#344054',
+    fontSize: 15,
+    fontWeight: '500',
+    backgroundColor: 'white',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    position: 'absolute',
+    left: 40,
+    top: 4,
+    opacity: 1,
   },
   settingsModalButtonSubtitle: {
     fontSize: 12,
@@ -2153,7 +2611,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 20,
     shadowColor: '#000',
-    shadowOffset: {
+       shadowOffset: {
       width: 0,
       height: 4,
     },
