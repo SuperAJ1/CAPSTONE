@@ -12,8 +12,10 @@ import CustomDrawer from '../components/CustomDrawer';
 const Drawer = createDrawerNavigator();
 
 export default function DrawerNavigator({ route }) {
-  const { user } = route.params;
-  const { role } = user;
+  const params = route?.params ?? {};
+  const user = params.user ?? {};
+  const role = user.role ?? 'user';
+  const initialRoute = params.initialRouteName ?? (role === 'admin' ? 'Dashboard' : 'Scanner');
 
   const scannerComponent = (props) => <Scanner {...props} userId={user.id} />;
   const dashboardComponent = (props) => <Dashboard {...props} user={user} />;
@@ -21,6 +23,7 @@ export default function DrawerNavigator({ route }) {
 
   return (
     <Drawer.Navigator
+      initialRouteName={initialRoute}
       drawerContent={(props) => <CustomDrawer {...props} user={user} />}
       screenOptions={({ navigation }) => ({
         headerShown: true,
@@ -34,6 +37,8 @@ export default function DrawerNavigator({ route }) {
         headerStyle: {
           backgroundColor: '#37353E',
           height: 80,
+          elevation: 0, // Remove shadow for a flat look
+          shadowOpacity: 0,
         },
         headerTintColor: '#FFFFFF',
         headerLeft: () => (
@@ -41,18 +46,18 @@ export default function DrawerNavigator({ route }) {
             <Feather name="menu" size={24} color="#FFFFFF" />
           </TouchableOpacity>
         ),
-        drawerActiveTintColor: '#000000', // Changed to black for active text
-        drawerActiveBackgroundColor: '#C5BAFF', // Purple background
-        drawerInactiveTintColor: '#bbb',
+        drawerActiveTintColor: '#FFFFFF', // White text for active item
+        drawerActiveBackgroundColor: 'rgba(255, 255, 255, 0.1)', // Subtle white highlight for press effect
+        drawerInactiveTintColor: '#FFFFFF', // Lighter gray for better visibility
         drawerLabelStyle: {
-          marginLeft: -10,
-          fontSize: 15,
-          fontWeight: '500', // Added for better readability
+          marginLeft: -20, // Align text with icon
+          fontSize: 16,
+          fontWeight: '500',
         },
         drawerItemStyle: {
-          borderRadius: 8, // Rounded corners for items
-          marginHorizontal: 8,
-          marginVertical: 2,
+          borderRadius: 8,
+          marginHorizontal: 12,
+          marginVertical: 4,
         },
       })}
     >
@@ -94,7 +99,7 @@ export default function DrawerNavigator({ route }) {
 
 const styles = StyleSheet.create({
   logo: {
-    width: 200,
-    height: 60,
+    width: 250,
+    height: 70,
   },
 });

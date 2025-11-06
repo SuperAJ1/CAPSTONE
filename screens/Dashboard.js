@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,15 +10,91 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { PieChart } from 'react-native-chart-kit';
+import { PieChart } from 'react-native-gifted-charts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useResponsive } from '../utils/responsive';
-import { PinchGestureHandler, State } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, withDelay, Easing, useDerivedValue, interpolate, Extrapolate } from 'react-native-reanimated';
 
 import { API_URL } from '../utils/config';
 
 const { width } = Dimensions.get('window');
-const basePadding = width * 0.04;
+
+// Animated component for summary cards with entrance animation
+const AnimatedSummaryCard = ({ icon, label, value, subtext, color, gradientColors, index }) => {
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(30);
+
+  useEffect(() => {
+    const delay = index * 150;
+    opacity.value = withDelay(delay, withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) }));
+    translateY.value = withDelay(delay, withTiming(0, { duration: 600, easing: Easing.out(Easing.cubic) }));
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: opacity.value,
+      transform: [{ translateY: translateY.value }],
+    };
+  });
+
+  return (
+    <Animated.View style={[styles.summaryCardContainer, animatedStyle]}>
+      <LinearGradient colors={gradientColors} style={styles.summaryCard}>
+        <Feather name={icon} size={32} color={color} style={styles.cardIcon} />
+        <Text style={styles.summaryLabel}>{label}</Text>
+        <Text style={styles.summaryValue}>{value}</Text>
+        <Text style={styles.summarySub}>{subtext}</Text>
+      </LinearGradient>
+    </Animated.View>
+  );
+};
+
+// Helper component for individual summary cards
+const SummaryCard = ({ icon, label, value, subtext, color, gradientColors }) => (
+  <View style={styles.summaryCardContainer}>
+    <LinearGradient colors={gradientColors} style={styles.summaryCard}>
+      <Feather name={icon} size={32} color={color} style={styles.cardIcon} />
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summarySub}>{subtext}</Text>
+    </LinearGradient>
+  </View>
+);
+
+const ShimmeringLoader = () => {
+  const shimmer = useSharedValue(-1);
+
+  useEffect(() => {
+    shimmer.value = withTiming(1, { duration: 1000 });
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const translateX = interpolate(
+      shimmer.value,
+      [-1, 1],
+      [-width, width],
+      Extrapolate.CLAMP
+    );
+    return {
+      transform: [{ translateX }],
+    };
+  });
+
+  return (
+    <View style={styles.shimmerContainer}>
+      <LinearGradient
+        colors={['#E0E0E0', '#F0F0F0', '#E0E0E0']}
+        start={{ x: 0, y: 0.5 }}
+        end={{ x: 1, y: 0.5 }}
+        style={StyleSheet.absoluteFill}
+      >
+        <Animated.View style={[StyleSheet.absoluteFill, animatedStyle]} />
+      </LinearGradient>
+      <ActivityIndicator size="large" color="#4A90E2" />
+      <Text style={styles.loadingText}>Loading Dashboard...</Text>
+    </View>
+  );
+};
 
 const fetchInventory = async () => {
   try {
@@ -40,18 +116,14 @@ const fetchInventory = async () => {
 
 function getCategoryColors(category) {
   switch (category) {
-    case 'Accessories': return '#C5BAFF';
-    case 'Clothing': return '#8FD3FF';
-    case 'Swimwear': return '#A0E7E5';
-    case 'Footwear': return '#FFA3A3';
-    case 'Bags': return '#B5EAD7';
-    case 'Beach Gear': return '#FFE4B5';
-    case 'Towels': return '#E6E6FA';
-    case 'Beach Toys': return '#F0E68C';
-    case 'Sunscreen': return '#FFB6C1';
-    case 'Kitchen': return '#DDA0DD';
-    case 'Other': return '#D3D3D3';
-    default: return '#D3D3D3';
+    case 'Accessories': return { color: '#C5BAFF', gradient: '#E6E0FF' };
+    case 'Clothing': return { color: '#8FD3FF', gradient: '#D4EDFF' };
+    case 'TShir': return { color: '#8FD3FF', gradient: '#D4EDFF' }; // Assigning same as Clothing
+    case 'toy': return { color: '#FFD6A5', gradient: '#FFEEDA' }; // New color for toys
+    case 'Swimwear': return { color: '#A0E7E5', gradient: '#D9F7F6' };
+    case 'Footwear': return { color: '#FFA3A3', gradient: '#FFD6D6' };
+    case 'Bags': return { color: '#B5EAD7', gradient: '#E2F5EE' };
+    default: return { color: '#D3D3D3', gradient: '#F0F0F0' };
   }
 }
 
@@ -59,34 +131,36 @@ export default function Dashboard() {
   const { isTablet } = useResponsive();
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [now, setNow] = useState(new Date());
-  const [scale, setScale] = useState(1);
-  const scrollViewRef = useRef(null);
-  const pinchStartScaleRef = useRef(1);
-  const contentWidth = width / Math.max(scale, 0.7);
+  const [focussedIndex, setFocussedIndex] = useState(-1);
+
+  const animationProgress = useSharedValue(0);
 
   useEffect(() => {
     fetchInventory().then((data) => {
-      console.log('Dashboard received data:', data);
       setInventory(data);
       setLoading(false);
     });
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
   }, []);
 
-  // Zoom functions
-  const zoomIn = () => {
-    setScale(prevScale => Math.min(prevScale + 0.1, 2));
-  };
+  useEffect(() => {
+    if (!loading) {
+      animationProgress.value = withTiming(1, { duration: 400, easing: Easing.inOut(Easing.ease) });
+    }
+  }, [loading]);
 
-  const zoomOut = () => {
-    setScale(prevScale => Math.max(prevScale - 0.1, 0.7));
-  };
+  const chartAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: animationProgress.value,
+      transform: [{ scale: interpolate(animationProgress.value, [0, 1], [0.9, 1]) }],
+    };
+  });
 
-  const resetZoom = () => {
-    setScale(1);
-  };
+  const listAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: animationProgress.value,
+      transform: [{ translateY: interpolate(animationProgress.value, [0, 1], [50, 0]) }],
+    };
+  });
 
   const totalProducts = inventory.length;
   const totalValue = inventory.reduce((sum, item) => {
@@ -106,13 +180,16 @@ export default function Dashboard() {
   const pieData = Object.entries(categoryCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([name, population]) => ({
-      name,
-      population,
-      color: getCategoryColors(name),
-      legendFontColor: '#3A3A3A',
-      legendFontSize: 14,
-    }));
+    .map(([name, count], index) => {
+      const { color, gradient } = getCategoryColors(name);
+      return {
+        name: name,
+        value: count,
+        color: color,
+        gradientCenterColor: gradient,
+        focused: index === focussedIndex,
+      };
+    });
 
   const recentlyAdded = [...inventory]
     .sort((a, b) => new Date(b.date_added) - new Date(a.date_added))
@@ -122,476 +199,336 @@ export default function Dashboard() {
     .sort((a, b) => Number(b.stock) * Number(b.price) - Number(a.stock) * Number(a.price))
     .slice(0, 5);
 
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8F9FA' }}>
+        <ShimmeringLoader />
+      </View>
+    );
+  }
+
   return (
-    <LinearGradient colors={['#FFFFFF', '#FFFFFF', '#FFFFFF']} style={{ flex: 1 }}>
-      <SafeAreaView style={styles.container}>
-        {/* Zoom Controls */}
-        <View style={styles.zoomControls}>
-          <TouchableOpacity onPress={zoomOut} style={styles.zoomButton}>
-            <Feather name="zoom-out" size={20} color="#ffffff" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={resetZoom} style={styles.zoomButton}>
-            <Text style={styles.zoomButtonText}>100%</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={zoomIn} style={styles.zoomButton}>
-            <Feather name="zoom-in" size={20} color="#ffffff" />
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollArea}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* HEADER */}
+        <View style={styles.headerContainer}>
+          <Feather name="activity" size={26} color="#4A5568" />
+          <Text style={styles.subtitle}>Here's what's happening with your inventory today.</Text>
         </View>
 
-        <PinchGestureHandler
-          onHandlerStateChange={(e) => {
-            const { state, scale: gestureScale } = e.nativeEvent;
-            if (state === State.BEGAN) {
-              pinchStartScaleRef.current = scale;
-            } else if (state === State.ACTIVE) {
-              const next = Math.max(0.7, Math.min(2, pinchStartScaleRef.current * gestureScale));
-              setScale(next);
-            } else if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-              const next = Math.max(0.7, Math.min(2, scale));
-              setScale(next);
-              pinchStartScaleRef.current = next;
-            }
-          }}
-          onGestureEvent={(e) => {
-            const { scale: gestureScale } = e.nativeEvent;
-            const next = Math.max(0.7, Math.min(2, pinchStartScaleRef.current * gestureScale));
-            setScale(next);
-          }}
-        >
-          <ScrollView 
-            ref={scrollViewRef}
-            contentContainerStyle={[
-              styles.scrollArea,
-              { transform: [{ scale }] },
-              { minHeight: '100%', width: contentWidth }
-            ]}
-            showsVerticalScrollIndicator={false}
-          >
-          {/* HEADER */}
-          <View style={styles.headerContainer}>
-            <View style={styles.titleContainer}>
-              <Text style={styles.headerText}>Dashboard Overview</Text>
-            </View>
-          </View>
+        {/* Summary Cards */}
+        <View style={styles.summaryRow}>
+          <AnimatedSummaryCard
+            index={0}
+            icon="box"
+            label="Total Products"
+            value={totalProducts}
+            subtext="Active items"
+            color="#3B82F6"
+            gradientColors={['#EFF6FF', '#FFFFFF']}
+          />
+          <AnimatedSummaryCard
+            index={1}
+            icon="dollar-sign"
+            label="Total Value"
+            value={`₱${totalValue.toFixed(2)}`}
+            subtext="Current stock value"
+            color="#10B981"
+            gradientColors={['#F0FDF4', '#FFFFFF']}
+          />
+          <AnimatedSummaryCard
+            index={2}
+            icon="trending-down"
+            label="Low Stock"
+            value={lowStock}
+            subtext="Items to restock"
+            color="#F59E0B"
+            gradientColors={['#FFFBEB', '#FFFFFF']}
+          />
+          <AnimatedSummaryCard
+            index={3}
+            icon="x-circle"
+            label="Out of Stock"
+            value={outOfStock}
+            subtext="Items unavailable"
+            color="#D0021B"
+            gradientColors={['#FEF2F2', '#FFFFFF']}
+          />
+        </View>
 
-          <Text style={styles.welcome}>Welcome back!</Text>
-          <Text style={styles.subtitle}>Here's what's happening with your inventory today</Text>
-          <Text style={styles.datetime}>
-            {now.toLocaleDateString(undefined, {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}, {now.toLocaleTimeString()}
-          </Text>
-
-          <View style={[styles.summaryRow, isTablet && { justifyContent: 'space-between' }]}>
-            <View style={styles.mergedCardContainer}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={styles.mergedGradientCard}>
-                <View style={styles.splitCard}>
-                  <Feather name="box" size={28} color="#3A7BD5" style={styles.cardIcon} />
-                  <Text style={styles.summaryLabel}>Total Products</Text>
-                  <Text style={styles.summaryValue}>{totalProducts}</Text>
-                  <Text style={styles.summarySub}>Active inventory items</Text>
-                </View>
-                <View style={styles.splitCard}>
-                  <Feather name="dollar-sign" size={28} color="#00838F" style={styles.cardIcon} />
-                  <Text style={styles.summaryLabel}>Total Inventory Value</Text>
-                  <Text style={styles.summaryValue}>₱{totalValue.toFixed(2)}</Text>
-                  <Text style={styles.summarySub}>Current stock value</Text>
-                </View>
-              </LinearGradient>
-            </View>
-            <View style={styles.mergedCardContainer}>
-              <LinearGradient colors={['#F5F7FA','#D3DAD9']} style={styles.mergedGradientCard}>
-                <View style={styles.splitCard}>
-                  <Feather name="arrow-down-circle" size={28} color="#C62828" style={styles.cardIcon} />
-                  <Text style={styles.summaryLabel}>Low Stock Items</Text>
-                  <Text style={styles.summaryValue}>{lowStock}</Text>
-                  <Text style={styles.summarySub}>Need restocking</Text>
-                </View>
-                <View style={styles.splitCard}>
-                  <Feather name="x-circle" size={28} color="#6A1B9A" style={styles.cardIcon} />
-                  <Text style={styles.summaryLabel}>Out of Stock</Text>
-                  <Text style={styles.summaryValue}>{outOfStock}</Text>
-                  <Text style={styles.summarySub}>Requires attention</Text>
-                </View>
-              </LinearGradient>
-            </View>
-          </View>
-
-          {/* Category Distribution */}
-          <View style={[styles.fullWidthCard, styles.cardNoBorder, {backgroundColor: 'transparent'}]}>
-            <LinearGradient colors={['#F5F7FA', '#D3DAD9']} style={[styles.gradientCard, {padding: basePadding}]}> 
-              <View style={styles.listHeader}>
-                <Text style={styles.cardTitle}>Category Distribution</Text>
-              </View>
-            {loading ? (
-              <View style={styles.chartLoadingContainer}>
-                <ActivityIndicator size="small" color="#C5BAFF" />
-              </View>
-            ) : pieData.length === 0 ? (
+        {/* Category Distribution */}
+        <Animated.View style={[chartAnimatedStyle]}>
+          <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={styles.card}>
+            <Text style={styles.cardTitle}>Category Distribution</Text>
+            {pieData.length === 0 ? (
               <View style={styles.emptyChartContainer}>
-                <Feather name="pie-chart" size={30} color="#E5E7EB" />
-                <Text style={styles.emptyChartText}>No category data</Text>
+                <Feather name="pie-chart" size={40} color="#E5E7EB" />
+                <Text style={styles.emptyChartText}>No category data available</Text>
               </View>
             ) : (
-              <View style={[styles.chartContainer, { width: '100%' }]}>
+              <View style={styles.chartContainer}>
                 <PieChart
                   data={pieData}
-                  width={contentWidth * 0.92}
-                  height={180}
-                  chartConfig={{
-                    backgroundColor: '#ffffff',
-                    backgroundGradientFrom: '#ffffff',
-                    backgroundGradientTo: '#ffffff',
-                    decimalPlaces: 0,
-                    color: (opacity = 1) => `rgba(58, 58, 58, ${opacity})`,
+                  donut
+                  showGradient
+                  focusOnPress
+                  onPress={(item, index) => {
+                    setFocussedIndex(index === focussedIndex ? -1 : index);
                   }}
-                  accessor="population"
-                  backgroundColor="transparent"
-                  paddingLeft="0"
-                  absolute
-                  hasLegend
-                  avoidFalseZero
-                  style={{
-                    marginVertical: -15,
-                    marginLeft: 0,
+                  radius={width / 5}
+                  innerRadius={width / 10}
+                  extraRadiusForFocused={width / 30}
+                  strokeWidth={1}
+                  strokeColor="#FFFFFF"
+                  centerLabelComponent={() => {
+                    const focusedItem = pieData[focussedIndex];
+                    const total = pieData.reduce((acc, i) => acc + i.value, 0);
+                    const percentage = focusedItem ? ((focusedItem.value / total) * 100).toFixed(0) : '';
+
+                    return (
+                      <View style={styles.centerLabelContainer}>
+                        {focussedIndex > -1 ? (
+                          <>
+                            <Text style={styles.centerLabelValue}>{`${percentage}%`}</Text>
+                            <Text style={styles.centerLabelText}>{focusedItem.name}</Text>
+                          </>
+                        ) : (
+                          <>
+                            <Text style={styles.centerLabelValue}>{total}</Text>
+                            <Text style={styles.centerLabelText}>Total Items</Text>
+                          </>
+                        )}
+                      </View>
+                    );
                   }}
                 />
-              </View>
-            )}
-            </LinearGradient>
-          </View>
-
-          {/* Second row in a responsive row */}
-          <View style={styles.rowWrap}>
-          {/* Recently Added */}
-          <View style={[styles.fullWidthCard, styles.cardNoBorder, styles.halfCard, {backgroundColor: 'transparent'}]}>
-            <LinearGradient colors={['#F5F7FA', '#D3DAD9']} style={[styles.gradientCard, {padding: basePadding}]}> 
-              <View style={[styles.listHeader, { marginBottom: 0 }]}>
-                <Text style={styles.cardTitle}>Recently Added</Text>
-              </View>
-            {recentlyAdded.map((item, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.itemRow,
-                  index === recentlyAdded.length - 1 && { marginBottom: 0 }
-                ]}
-              >
-                <Feather name="box" size={16} color="#9CA3AF" style={styles.itemIcon} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                  <View style={styles.itemMetaRow}>
-                    <View style={[styles.categoryTag, { backgroundColor: getCategoryColors(item.category) + '20' }]}>
-                      <Text style={[styles.categoryText, { color: getCategoryColors(item.category) }]}>
-                        {item.category}
-                      </Text>
-                    </View>
-                    <Text style={styles.itemStock}>{item.stock} in stock</Text>
-                  </View>
-                  <Text style={styles.itemPrice}>₱{item.price}</Text>
-                  <Text style={styles.itemDate}>
-                    Added on {new Date(item.date_added).toLocaleDateString()}
-                  </Text>
+                <View style={styles.legendContainer}>
+                  {pieData.map((item, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={styles.legendItem}
+                      onPress={() => setFocussedIndex(index === focussedIndex ? -1 : index)}
+                    >
+                      <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                      <Text style={styles.legendLabel}>{item.name} ({item.value})</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
-            ))}
-            </LinearGradient>
-          </View>
+            )}
+          </LinearGradient>
+        </Animated.View>
 
-          {/* Highest Value Items */}
-          <View style={[styles.fullWidthCard, styles.cardNoBorder, styles.halfCard, {backgroundColor: 'transparent'}]}>
-            <LinearGradient colors={['#F5F7FA', '#D3DAD9']} style={[styles.gradientCard, {padding: basePadding}]}> 
-              <View style={styles.listHeader}>
-                <Text style={styles.cardTitle}>Highest Value Items</Text>
-              </View>
-            {topByValue.map((item, index) => (
-              <View key={index} style={styles.itemRow}>
-                <Text style={styles.rank}>{index + 1}.</Text>
-                <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                <Text style={styles.itemValue}>₱{(item.price * item.stock).toFixed(2)}</Text>
-              </View>
-            ))}
+        {/* Lists Row */}
+        <Animated.View style={[listAnimatedStyle]}>
+          <View style={styles.listRow}>
+            {/* Recently Added */}
+            <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={[styles.card, styles.listCard]}>
+              <Text style={styles.cardTitle}>Recently Added</Text>
+              {recentlyAdded.map((item, index) => (
+                <View key={index} style={styles.itemRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.itemSub}>{item.stock} in stock · ₱{item.price}</Text>
+                  </View>
+                  <Text style={styles.itemDate}>
+                    {new Date(item.date_added).toLocaleDateString()}
+                  </Text>
+                </View>
+              ))}
+            </LinearGradient>
+
+            {/* Highest Value Items */}
+            <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={[styles.card, styles.listCard]}>
+              <Text style={styles.cardTitle}>Top Value Items</Text>
+              {topByValue.map((item, index) => (
+                <View key={index} style={styles.itemRow}>
+                  <Text style={styles.rank}>{index + 1}.</Text>
+                  <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.itemValue}>₱{(item.price * item.stock).toFixed(2)}</Text>
+                </View>
+              ))}
             </LinearGradient>
           </View>
-          </View>
-          </ScrollView>
-        </PinchGestureHandler>
-      </SafeAreaView>
-    </LinearGradient>
+        </Animated.View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F8F9FA',
   },
-  rowWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
+  shimmerContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F0F0F0',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#6B7280',
   },
   scrollArea: {
-    padding: basePadding,
-    paddingBottom: 40,
-    transformOrigin: 'top left',
+    padding: 20,
   },
-  halfCard: {
-    flexBasis: '49%',
-    maxWidth: '49%',
-  },
-  welcome: {
-    fontSize: width * 0.07,
-    fontWeight: '700',
-    color: '#3A3A3A',
-    fontFamily: 'Poppins_700Bold',
-    marginTop: 10,
+  headerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
   },
   subtitle: {
-    fontSize: width * 0.045,
-    color: '#555555',
-    fontFamily: 'Poppins_400Regular',
-    marginBottom: 5,
-  },
-  datetime: {
-    fontSize: width * 0.04,
-    color: '#777777',
-    marginBottom: basePadding,
-    fontFamily: 'Poppins_400Regular',
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#4A5568',
+    marginLeft: 12,
   },
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginHorizontal: -basePadding * 0.25,
     justifyContent: 'space-between',
+    marginBottom: 12,
   },
-  mergedCardContainer: {
-    flexBasis: '48%',
-    flexGrow: 1,
-    borderRadius: 16,
-    marginBottom: basePadding * 0.5,
-    minWidth: 0,
-    overflow: 'hidden',
-    marginHorizontal: basePadding * 0.25,
-  },
-  mergedGradientCard: {
-    borderRadius: 16,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    padding: basePadding,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  splitCard: {
-    alignItems: 'center',
-    flex: 1,
+  summaryCardContainer: {
+    width: '48%',
+    marginBottom: 16,
   },
   summaryCard: {
-    flexBasis: '48%',
-    flexGrow: 1,
     borderRadius: 16,
-    marginBottom: basePadding * 0.5,
-    minWidth: 0,
-    overflow: 'hidden',
-    marginHorizontal: basePadding * 0.25,
-    flexDirection: 'column',
-  },
-  gradientCard: {
-    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
     width: '100%',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    padding: basePadding,
-    flex: 1,
+    shadowColor: '#9CA3AF',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
   },
   cardIcon: {
     marginBottom: 12,
   },
   summaryLabel: {
-    fontSize: width * 0.04,
-    color: '#555555',
-    fontFamily: 'Poppins_400Regular',
+    fontSize: 18,
+    color: '#6B7280',
+    fontWeight: '500',
     textAlign: 'center',
   },
   summaryValue: {
-    fontSize: width * 0.065,
+    fontSize: 30,
     fontWeight: 'bold',
-    color: '#3A3A3A',
-    fontFamily: 'Poppins_700Bold',
-    marginVertical: 5,
+    color: '#1F2937',
+    marginVertical: 4,
   },
   summarySub: {
-    fontSize: width * 0.035,
-    color: '#777777',
-    fontFamily: 'Poppins_400Regular',
-    textAlign: 'center',
+    fontSize: 16,
+    color: '#9CA3AF',
   },
-  fullWidthCard: {
-    width: '100%',
+  card: {
     borderRadius: 16,
-    marginBottom: basePadding,
-    overflow: 'hidden',
-    flexDirection: 'column',
-  },
-  cardNoBorder: {
-    borderWidth: 0,
-    padding: 0,
-    overflow: 'hidden',
+    padding: 16,
+    marginBottom: 20,
   },
   cardTitle: {
-    fontSize: width * 0.05,
-    fontWeight: '600',
-    color: '#3A3A3A',
-    fontFamily: 'Poppins_600SemiBold',
-  },
-  listHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    gap: 10,
-    flexWrap: 'wrap',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
-  },
-  itemIcon: {
-    marginRight: 8,
-    marginTop: 4,
-  },
-  itemName: {
-    fontWeight: '600',
-    fontSize: width * 0.042,
-    color: '#3A3A3A',
-    fontFamily: 'Poppins_600SemiBold',
-    flexShrink: 1,
-  },
-  itemMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginVertical: 4,
-    flexWrap: 'wrap',
-  },
-  categoryTag: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    marginRight: 6,
-  },
-  categoryText: {
-    fontSize: width * 0.035,
-    fontWeight: '500',
-    fontFamily: 'Poppins_400Regular',
-  },
-  itemStock: {
-    color: '#777777',
-    fontSize: width * 0.035,
-    fontFamily: 'Poppins_400Regular',
-  },
-  itemPrice: {
-    color: '#3A3A3A',
-    fontWeight: '600',
-    fontSize: width * 0.035,
-    fontFamily: 'Poppins_600SemiBold',
-  },
-  itemDate: {
-    color: '#999999',
-    fontSize: width * 0.035,
-    marginTop: 4,
-    fontFamily: 'Poppins_400Regular',
-  },
-  rank: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#C5BAFF',
-    width: 20,
-    fontSize: width * 0.042,
-    fontFamily: 'Poppins_600SemiBold',
-  },
-  itemValue: {
-    fontWeight: 'bold',
-    color: '#3A3A3A',
-    fontSize: width * 0.042,
-    marginLeft: 8,
-    fontFamily: 'Poppins_700Bold',
+    color: '#1F2937',
+    marginBottom: 16,
   },
   chartContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: -15,
-    marginBottom: -20,
-  },
-  chartLoadingContainer: {
-    height: 150,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: -10,
   },
   emptyChartContainer: {
     height: 150,
     justifyContent: 'center',
     alignItems: 'center',
-    opacity: 0.6,
-    marginBottom: -10,
+    opacity: 0.8,
   },
   emptyChartText: {
-    marginTop: 8,
-    color: '#999999',
-    fontSize: width * 0.04,
-    fontFamily: 'Poppins_400Regular',
+    marginTop: 12,
+    color: '#6B7280',
+    fontSize: 18,
   },
-  headerContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  titleContainer: {
-    backgroundColor: '#000000',
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    borderRadius: 25,
-    width: '85%',
-    alignItems: 'center',
+  centerLabelContainer: {
     justifyContent: 'center',
+    alignItems: 'center',
   },
-  headerText: {
-    fontSize: width * 0.055,
+  centerLabelValue: {
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#FFFFFF',
-    fontFamily: 'Poppins_700Bold',
+    color: '#1F2937',
   },
-  zoomControls: {
-    position: 'absolute',
-    right: 15,
-    top: 15,
-    zIndex: 100,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    borderRadius: 20,
-    padding: 5,
+  centerLabelText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  legendContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginTop: 24,
+    width: '100%',
+  },
+  legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginRight: 16,
+    marginBottom: 12,
+    padding: 4,
   },
-  zoomButton: {
-    padding: 8,
+  legendDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginRight: 8,
   },
-  zoomButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
+  legendLabel: {
     fontSize: 16,
+    color: '#374151',
+  },
+  listRow: {
+    flexDirection: 'column',
+    gap: 20,
+  },
+  listCard: {
+    width: '100%',
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  itemName: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  itemSub: {
+    fontSize: 16,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  itemDate: {
+    fontSize: 16,
+    color: '#9CA3AF',
+  },
+  rank: {
+    fontWeight: 'bold',
+    color: '#9CA3AF',
+    width: 24,
+    fontSize: 18,
+  },
+  itemValue: {
+    fontWeight: 'bold',
+    color: '#1F2937',
+    fontSize: 18,
   },
 });
