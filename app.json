@@ -1,38 +1,13 @@
 {
   "expo": {
-    "name": "RTWv2",
-    "slug": "RTWv2",
+    "name": "RTW SIMS",
+    "slug": "rtwv2",
     "version": "1.0.0",
-    "orientation": "landscape",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
-    },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/logo1.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true,
-      "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.CAMERA"
-      ],
-      "package": "com.anonymous.RTWv2"
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      "expo-barcode-scanner",
-      "expo-font"
-    ]
+    "extra": {
+      "eas": {
+        "projectId": "f73d4c8c-0901-48d0-8491-c3852c4ae8a6"
+      }
+    }
   }
 }

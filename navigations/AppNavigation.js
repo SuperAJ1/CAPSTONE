@@ -9,6 +9,7 @@ import ForgotPassword from '../screens/ForgotPassword';
 import ResetPassword from '../screens/ResetPassword';
 import Scanner from '../screens/Scanner';
 import Scanner2 from '../screens/Scanner2';
+import TransactionsScreen from '../screens/TransactionsScreen';
 import Dashboard from '../screens/Dashboard'; // Assuming this is your MainApp screen
 
 import DrawerNavigator from './DrawerNavigator';
@@ -45,6 +46,11 @@ export default function AppNavigation() {
           name="Scanner2" 
           component={Scanner2} 
           options={{ headerShown: false }} 
+        />
+        <Stack.Screen
+          name="Transactions"
+          component={TransactionsScreen}
+          options={{ headerShown: false }}
         />
         <Stack.Screen 
           name="MainApp"

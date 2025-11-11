@@ -1,3 +1,4 @@
+'use strict';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
@@ -10,11 +11,12 @@ import {
   View,
   Animated,
   PanResponder,
-  Dimensions,
+  useWindowDimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,13 +24,335 @@ import { useNavigation } from '@react-navigation/native';
 
 import { API_URL } from '../utils/config';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const IS_LANDSCAPE = SCREEN_WIDTH > SCREEN_HEIGHT;
-const CARD_MAX_WIDTH = IS_LANDSCAPE ? Math.min(640, SCREEN_WIDTH * 0.55) : 620;
-const BRAND_ROW_WIDTH = CARD_MAX_WIDTH;
-const LOGO_SIZE = IS_LANDSCAPE ? Math.min(140, SCREEN_HEIGHT * 0.28) : SCREEN_WIDTH * 0.18;
+const getStyles = (width, height) => {
+  const IS_LANDSCAPE = width > height;
+  const CARD_MAX_WIDTH = IS_LANDSCAPE ? Math.min(500, width * 0.5) : Math.min(420, width * 0.9);
+  const LOGO_SIZE = IS_LANDSCAPE ? Math.min(180, height * 0.3) : width * 0.30;
+
+  return StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: '#F5F5F7', // iOS light gray background
+    },
+    keyboardAvoidingView: {
+      flex: 1,
+    },
+    scrollViewContent: {
+      flexGrow: 1,
+      justifyContent: 'flex-start',
+      paddingTop: 10,
+      paddingBottom: 20,
+      paddingHorizontal: 20,
+    },
+    container: {
+      flex: 1,
+      justifyContent: 'flex-start',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingTop: 0,
+    },
+    centerWrapper: {
+      width: '100%',
+      maxWidth: CARD_MAX_WIDTH,
+      alignItems: 'center',
+    },
+    brandingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: -18,
+      gap: 14,
+    },
+    brandingTextCol: {
+      justifyContent: 'center',
+    },
+    brandTitle: {
+      fontSize: Math.min(width * 0.12, 50),
+      fontWeight: '700',
+      color: '#1D1D1F',
+      letterSpacing: -0.5,
+    },
+    brandSubtitle: {
+      color: '#86868B',
+      fontSize: Math.min(width * 0.048, 22),
+      letterSpacing: 1.2,
+      fontWeight: '500',
+      marginTop: 2,
+    },
+    logo: {
+      width: LOGO_SIZE,
+      height: LOGO_SIZE,
+      resizeMode: 'contain',
+    },
+    card: {
+      width: '100%',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 20,
+      padding: 24,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.1,
+      shadowRadius: 24,
+      elevation: 8,
+    },
+    welcomeTitle: {
+      fontSize: Math.min(width * 0.11, 46),
+      textAlign: 'center',
+      fontWeight: '700',
+      color: '#1D1D1F',
+      marginBottom: 8,
+      letterSpacing: -0.3,
+    },
+    welcomeSubtitle: {
+      textAlign: 'center',
+      color: '#86868B',
+      fontSize: Math.min(width * 0.058, 24),
+      marginBottom: 24,
+      fontWeight: '400',
+      letterSpacing: 0.1,
+      lineHeight: 30,
+    },
+    label: {
+      color: '#1D1D1F',
+      fontSize: Math.min(width * 0.052, 20),
+      marginBottom: 8,
+      marginTop: 20,
+      fontWeight: '600',
+    },
+    inputWrapper: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#F5F5F7',
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      justifyContent: 'space-between',
+      borderWidth: 1,
+      borderColor: '#E5E5E7',
+      marginTop: 8,
+      minHeight: 58,
+    },
+    inputError: {
+      borderColor: '#FF3B30',
+      backgroundColor: '#FFF5F5',
+    },
+    errorText: {
+      color: '#FF3B30',
+      fontSize: Math.min(width * 0.045, 18),
+      marginTop: 6,
+      marginLeft: 4,
+      fontWeight: '500',
+    },
+    input: {
+      flex: 1,
+      fontSize: Math.min(width * 0.055, 22),
+      color: '#1D1D1F',
+      fontWeight: '400',
+    },
+    forgotPassword: {
+      textAlign: 'right',
+      marginTop: 16,
+      color: '#007AFF',
+      fontSize: Math.min(width * 0.048, 20),
+      fontWeight: '500',
+    },
+    loginButton: {
+      backgroundColor: '#000000',
+      paddingVertical: 18,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 32,
+      minHeight: 58,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 5,
+    },
+    disabledButton: {
+      backgroundColor: '#86868B',
+      opacity: 0.6,
+    },
+    notify: {
+      position: 'absolute',
+      top: 8,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    notifyText: {
+      backgroundColor: 'rgba(0,0,0,0.85)',
+      color: '#FFFFFF',
+      paddingVertical: 10,
+      paddingHorizontal: 20,
+      borderRadius: 20,
+      overflow: 'hidden',
+      fontWeight: '600',
+      fontSize: Math.min(width * 0.048, 20),
+    },
+    loginButtonText: {
+      color: '#FFFFFF',
+      fontSize: Math.min(width * 0.055, 22),
+      fontWeight: '600',
+      letterSpacing: 0.3,
+    },
+    brandingContainer: {
+      alignItems: 'center',
+      marginTop: 20,
+      marginBottom: 10,
+    },
+    strengthMeter: {
+      flexDirection: 'row',
+      marginTop: 10,
+      height: 4,
+      width: '100%',
+      justifyContent: 'space-between',
+    },
+    strengthBar: {
+      flex: 1,
+      height: 4,
+      backgroundColor: '#E5E5E7',
+      marginHorizontal: 2,
+      borderRadius: 2,
+    },
+    strengthBarActive: {
+      backgroundColor: '#FF9500',
+    },
+    // Forgot Password Modal Styles
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    modalOverlayTouchable: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+    },
+    modalCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 24,
+      padding: 36,
+      width: '100%',
+      maxWidth: Math.min(420, width * 0.88),
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 10,
+      },
+      shadowOpacity: 0.2,
+      shadowRadius: 30,
+      elevation: 15,
+    },
+    modalIconContainer: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      backgroundColor: '#F5F5F7',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 28,
+    },
+    modalHeaderContainer: {
+      alignItems: 'center',
+      marginBottom: 24,
+      width: '100%',
+    },
+    modalTitle: {
+      fontSize: Math.min(width * 0.075, 32),
+      fontWeight: '700',
+      color: '#1D1D1F',
+      textAlign: 'center',
+      marginBottom: 8,
+      letterSpacing: -0.3,
+    },
+    modalSubtitle: {
+      fontSize: Math.min(width * 0.042, 18),
+      color: '#86868B',
+      fontWeight: '400',
+      textAlign: 'center',
+      letterSpacing: 0.15,
+    },
+    modalMessageText: {
+      fontSize: Math.min(width * 0.040, 17),
+      color: '#1D1D1F',
+      textAlign: 'center',
+      lineHeight: 24,
+      marginBottom: 28,
+      fontWeight: '400',
+      letterSpacing: 0.1,
+      paddingHorizontal: 4,
+    },
+    modalContactSection: {
+      borderTopWidth: 1,
+      borderTopColor: '#E5E5E7',
+      paddingTop: 24,
+      marginTop: 8,
+      width: '100%',
+      alignItems: 'center',
+    },
+    modalContactTitle: {
+      fontSize: Math.min(width * 0.035, 14),
+      color: '#86868B',
+      fontWeight: '600',
+      marginBottom: 20,
+      textAlign: 'center',
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+    },
+    modalContactItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 14,
+      paddingVertical: 6,
+      width: '100%',
+    },
+    modalContactText: {
+      fontSize: Math.min(width * 0.040, 17),
+      color: '#1D1D1F',
+      fontWeight: '500',
+      letterSpacing: 0.2,
+      marginLeft: 12,
+    },
+    modalCloseButton: {
+      backgroundColor: '#000000',
+      paddingVertical: 16,
+      paddingHorizontal: 40,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 28,
+      width: '100%',
+      minHeight: 52,
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 5,
+    },
+    modalCloseButtonText: {
+      color: '#FFFFFF',
+      fontSize: Math.min(width * 0.042, 18),
+      fontWeight: '600',
+      letterSpacing: 0.3,
+    },
+  });
+}
 
 export default function Login() {
+  const { width, height } = useWindowDimensions();
+  const styles = getStyles(width, height);
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -36,6 +360,7 @@ export default function Login() {
   const [passwordStrength, setPasswordStrength] = useState(0);
   const [usernameError, setUsernameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [isForgotPasswordModalVisible, setIsForgotPasswordModalVisible] = useState(false);
   const navigation = useNavigation();
   const slideAnim = useRef(new Animated.Value(0)).current;
   const usernameRef = useRef(null);
@@ -88,7 +413,7 @@ export default function Login() {
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dy > 120) {
           Animated.timing(slideAnim, {
-            toValue: SCREEN_HEIGHT,
+            toValue: height,
             duration: 300,
             useNativeDriver: true,
           }).start(() => {
@@ -130,6 +455,12 @@ export default function Login() {
     setIsLoading(true);
 
     try {
+      // Send plain password - server should use bcrypt.compare() to verify
+      // bcrypt.compare() takes plain password and compares with stored hash
+      console.log('Login attempt:', {
+        username: username.trim(),
+        passwordLength: password.length
+      });
       
       const response = await fetch(`${API_URL}/login2.php`, {
         method: 'POST',
@@ -171,7 +502,7 @@ export default function Login() {
 
         console.log('Login success. User data:', user);
         
-        // Navigate based on user role
+        // Navigate based on user role (restored logic)
         if (user.role === 'user') {
           navigation.reset({
             index: 0,
@@ -190,7 +521,6 @@ export default function Login() {
           ? 'Account is inactive'
           : (responseData.message || 'Invalid username or password');
         setUsernameError('Invalid username or password');
-        setPasswordError('Invalid username or password');
         triggerShake(usernameShake);
         triggerShake(passwordShake);
         showNotify(msg);
@@ -232,10 +562,10 @@ export default function Login() {
                 <Text style={styles.welcomeTitle}>Welcome Back</Text>
                 <Text style={styles.welcomeSubtitle}>Enter your username to sign in to your account</Text>
 
-                <Animated.View style={[styles.inputWrapper, usernameError && styles.inputError, { transform: [{ translateX: usernameShake }] }]}>
+                <Animated.View style={[styles.inputWrapper, usernameError && styles.inputError, { transform: [{ translateX: usernameShake }], marginBottom: 12 }]}>
                   <TextInput
                     placeholder="Username"
-                    placeholderTextColor="#6D6D6D"
+                    placeholderTextColor="#86868B"
                     style={styles.input}
                     value={username}
                     onChangeText={(t) => { setUsername(t); if (usernameError) setUsernameError(''); }}
@@ -248,14 +578,15 @@ export default function Login() {
                     onSubmitEditing={() => passwordRef.current && passwordRef.current.focus && passwordRef.current.focus()}
                     onFocus={() => usernameError && setUsernameError('')}
                   />
-                  <Ionicons name="person" size={20} color="#6D6D6D" />
+                  <Ionicons name="person-outline" size={26} color="#86868B" />
                 </Animated.View>
+                {!!usernameError && <Text style={styles.errorText}>{usernameError}</Text>}
 
                 <Animated.View style={[styles.inputWrapper, passwordError && styles.inputError, { transform: [{ translateX: passwordShake }] }]}>
                   <TextInput
                     placeholder="Password"
                     secureTextEntry={!showPassword}
-                    placeholderTextColor="#6D6D6D"
+                    placeholderTextColor="#86868B"
                     style={styles.input}
                     value={password}
                     onChangeText={(t) => { setPassword(t); if (passwordError) setPasswordError(''); }}
@@ -266,12 +597,11 @@ export default function Login() {
                     onFocus={() => passwordError && setPasswordError('')}
                   />
                   <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color="#6D6D6D" />
+                    <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={26} color="#86868B" />
                   </TouchableOpacity>
                 </Animated.View>
-                {!!passwordError && <Text style={styles.errorText}>{passwordError}</Text>}
 
-                <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+                <TouchableOpacity onPress={() => setIsForgotPasswordModalVisible(true)}>
                   <Text style={styles.forgotPassword}>Forgot password?</Text>
                 </TouchableOpacity>
 
@@ -316,218 +646,63 @@ export default function Login() {
       >
         <Text style={styles.notifyText}>{notifyMsg}</Text>
       </Animated.View>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={isForgotPasswordModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsForgotPasswordModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalOverlayTouchable}
+            activeOpacity={1}
+            onPress={() => setIsForgotPasswordModalVisible(false)}
+          />
+          <View style={styles.modalCard}>
+            {/* Icon */}
+            <View style={styles.modalIconContainer}>
+              <Ionicons name="lock-closed-outline" size={44} color="#86868B" />
+            </View>
+
+            {/* Title */}
+            <View style={styles.modalHeaderContainer}>
+              <Text style={styles.modalTitle}>Forgot Password</Text>
+              <Text style={styles.modalSubtitle}>Password reset assistance</Text>
+            </View>
+
+            {/* Message */}
+            <Text style={styles.modalMessageText}>
+              Password resets are handled manually. Please contact the system administrator.
+            </Text>
+
+            {/* Contact Information */}
+            <View style={styles.modalContactSection}>
+              <Text style={styles.modalContactTitle}>Contact Administrator</Text>
+              
+              <View style={styles.modalContactItem}>
+                <Ionicons name="call-outline" size={22} color="#86868B" />
+                <Text style={styles.modalContactText}>0912-345-6789</Text>
+              </View>
+              
+              <View style={styles.modalContactItem}>
+                <Ionicons name="mail-outline" size={22} color="#86868B" />
+                <Text style={styles.modalContactText}>admin@rtw.com</Text>
+              </View>
+            </View>
+
+            {/* Close Button */}
+            <TouchableOpacity 
+              style={styles.modalCloseButton}
+              onPress={() => setIsForgotPasswordModalVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalCloseButtonText}>Back to Login</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F7F8FA', // A slightly off-white background
-  },
-  keyboardAvoidingView: {
-    flex: 1,
-  },
-  scrollViewContent: {
-    flexGrow: 1,
-    justifyContent: 'center', // Center content vertically
-    paddingVertical: 20,
-  },
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  centerWrapper: {
-    width: '100%',
-    maxWidth: CARD_MAX_WIDTH,
-    alignItems: 'center',
-  },
-  brandingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center', // Center the logo and title
-    gap: 16,
-    marginBottom: 24,
-  },
-  brandingTextCol: {
-    justifyContent: 'center',
-  },
-  brandTitle: {
-    fontSize: SCREEN_WIDTH * 0.07, // Larger title
-    fontWeight: 'bold',
-    color: '#1A202C',
-  },
-  brandSubtitle: {
-    color: '#4A5568',
-    fontSize: SCREEN_WIDTH * 0.03,
-    letterSpacing: 1.5, // More spacing
-    fontWeight: '500',
-  },
-  logo: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-    resizeMode: 'contain',
-  },
-  card: {
-    width: '92%',
-    maxWidth: CARD_MAX_WIDTH,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#D3DAD9',
-    padding: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  welcomeTitle: {
-    fontSize: SCREEN_WIDTH * 0.065,
-    textAlign: 'center',
-    fontWeight: '700',
-    color: '#37353E',
-    marginTop: 4,
-  },
-  welcomeSubtitle: {
-    textAlign: 'center',
-    color: '#6B7280',
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  label: {
-    color: '#3A3A3A',
-    fontSize: SCREEN_WIDTH * 0.035,
-    marginBottom: 5,
-    marginTop: 20,
-    fontWeight: 'bold',
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F7FA',
-    borderRadius: 10,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#D3DAD9',
-    marginTop: 10,
-  },
-  inputError: {
-    borderColor: '#FF6B6B',
-  },
-  errorText: {
-    color: '#FF6B6B',
-    fontSize: SCREEN_WIDTH * 0.03,
-    marginTop: 6,
-    marginLeft: 4,
-  },
-  input: {
-    flex: 1,
-    fontSize: SCREEN_WIDTH * 0.04,
-    color: '#2A2A2A',
-  },
-  forgotPassword: {
-    textAlign: 'right',
-    marginTop: 10,
-    color: '#715A5A',
-    fontSize: SCREEN_WIDTH * 0.035,
-    fontWeight: '500',
-  },
-  loginButton: {
-    backgroundColor: '#000000',
-    paddingVertical: 15,
-    borderRadius: 30,
-    alignItems: 'center',
-    marginTop: 30,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-  },
-  disabledButton: {
-    backgroundColor: '#44444E',
-    opacity: 0.7,
-  },
-  notify: {
-    position: 'absolute',
-    top: 8,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifyText: {
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    color: '#FFFFFF',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-    fontWeight: '600',
-  },
-  loginButtonText: {
-    color: '#FFFFFF',
-    fontSize: SCREEN_WIDTH * 0.045,
-    fontWeight: 'bold',
-  },
-  brandingContainer: {
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  brandingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: 12,
-    width: '92%',
-    maxWidth: BRAND_ROW_WIDTH,
-    alignSelf: 'center',
-    marginBottom: 4,
-    backgroundColor: 'transparent',
-    borderRadius: 0,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-  },
-  brandingTextCol: {
-    justifyContent: 'center',
-  },
-  brandTitle: {
-    fontSize: SCREEN_WIDTH * 0.045,
-    fontWeight: 'bold',
-    color: '#37353E',
-    marginTop: 10,
-  },
-  brandSubtitle: {
-    color: '#44444E',
-    fontSize: SCREEN_WIDTH * 0.035,
-    letterSpacing: 1,
-  },
-  logo: {
-    width: LOGO_SIZE,
-    height: LOGO_SIZE,
-    resizeMode: 'contain',
-  },
-  strengthMeter: {
-    flexDirection: 'row',
-    marginTop: 10,
-    height: 4,
-    width: '100%',
-    justifyContent: 'space-between',
-  },
-  strengthBar: {
-    flex: 1,
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    marginHorizontal: 2,
-    borderRadius: 2,
-  },
-  strengthBarActive: {
-    backgroundColor: '#FFC107',
-  },
-});

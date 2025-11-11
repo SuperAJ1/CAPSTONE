@@ -40,15 +40,11 @@ const TabBarIcon = ({ name, focused }) => {
   );
 };
 
-function DrawerNavigation({ initialRouteName, user }) {
-  const role = user?.role ?? 'user';
-  const isAdmin = role === 'admin';
-  const resolvedInitialRoute = initialRouteName || (isAdmin ? 'Dashboard' : 'Scanner');
-
+function DrawerNavigation({ initialRouteName }) {
   return (
     <Drawer.Navigator
-      initialRouteName={resolvedInitialRoute}
-      drawerContent={(props) => <CustomDrawer {...props} user={user} />}
+      initialRouteName={initialRouteName || 'Dashboard'}
+      drawerContent={(props) => <CustomDrawer {...props} />}
       screenOptions={({ navigation }) => ({
         drawerActiveTintColor: '#FFFFFF',
         drawerActiveBackgroundColor: 'rgba(255, 255, 255, 0.1)',
@@ -95,50 +91,41 @@ function DrawerNavigation({ initialRouteName, user }) {
         }),
       })}
     >
-      {isAdmin && (
-        <Drawer.Screen 
-          name="Dashboard" 
-          options={{
-            drawerIcon: ({ color }) => (
-              <Feather name="home" size={20} color={color} />
-            )
-          }}
-        >
-          {(props) => <Dashboard {...props} user={user} />}
-        </Drawer.Screen>
-      )}
+      <Drawer.Screen 
+        name="Dashboard" 
+        component={Dashboard}
+        options={{
+          drawerIcon: ({ color }) => (
+            <Feather name="home" size={20} color={color} />
+          )
+        }}
+      />
       <Drawer.Screen 
         name="Scanner" 
+        component={Scanner}
         options={{
           drawerIcon: ({ color }) => (
             <Feather name="camera" size={20} color={color} />
           )
         }}
-      >
-        {(props) => <Scanner {...props} userId={user?.id} />}
-      </Drawer.Screen>
-      {isAdmin && (
-        <Drawer.Screen 
-          name="Inventory" 
-          options={{
-            drawerIcon: ({ color }) => (
-              <Feather name="box" size={20} color={color} />
-            )
-          }}
-        >
-          {(props) => <Inventory {...props} user={user} />}
-        </Drawer.Screen>
-      )}
+      />
+      <Drawer.Screen 
+        name="Inventory" 
+        component={Inventory}
+        options={{
+          drawerIcon: ({ color }) => (
+            <Feather name="box" size={20} color={color} />
+          )
+        }}
+      />
     </Drawer.Navigator>
   );
 }
 
-function TabNavigation({ initialRouteName, user }) {
-  const role = user?.role ?? 'user';
-  const isAdmin = role === 'admin';
+function TabNavigation({ initialRouteName }) {
   return (
     <Tab.Navigator
-      initialRouteName={initialRouteName || (isAdmin ? 'Dashboard' : 'Scanner')}
+      initialRouteName={initialRouteName || 'Dashboard'}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
@@ -167,34 +154,27 @@ function TabNavigation({ initialRouteName, user }) {
         tabBarInactiveTintColor: '#9E9E9E',
       })}
     >
-      {isAdmin && (
-        <Tab.Screen 
-          name="Dashboard" 
-          options={{ title: 'Dashboard' }} 
-        >
-          {(props) => <Dashboard {...props} user={user} />}
-        </Tab.Screen>
-      )}
+      <Tab.Screen 
+        name="Dashboard" 
+        component={Dashboard} 
+        options={{ title: 'Dashboard' }} 
+      />
       <Tab.Screen 
         name="Scanner" 
+        component={Scanner} 
         options={{ title: 'Scanner' }} 
-      >
-        {(props) => <Scanner {...props} userId={user?.id} />}
-      </Tab.Screen>
-      {isAdmin && (
-        <Tab.Screen 
-          name="Inventory" 
-          options={{ title: 'Inventory' }} 
-        >
-          {(props) => <Inventory {...props} user={user} />}
-        </Tab.Screen>
-      )}
+      />
+      <Tab.Screen 
+        name="Inventory" 
+        component={Inventory} 
+        options={{ title: 'Inventory' }} 
+      />
     </Tab.Navigator>
   );
 }
 
 export default function ResponsiveNavigation({ route }) {
-  const { initialRouteName, user } = route.params || {};
+  const { initialRouteName } = route.params || {};
   const [orientation, setOrientation] = useState(
     Dimensions.get('window').width > Dimensions.get('window').height 
       ? 'landscape' 
@@ -212,11 +192,7 @@ export default function ResponsiveNavigation({ route }) {
 
   return (
     <View style={styles.container}>
-      {isTablet 
-        ? <DrawerNavigation initialRouteName={initialRouteName} user={user} />
-        : (orientation === 'landscape' 
-          ? <DrawerNavigation initialRouteName={initialRouteName} user={user} />
-          : <TabNavigation initialRouteName={initialRouteName} user={user} />)}
+      {isTablet ? <DrawerNavigation initialRouteName={initialRouteName} /> : (orientation === 'landscape' ? <DrawerNavigation initialRouteName={initialRouteName} /> : <TabNavigation initialRouteName={initialRouteName} />)}
     </View>
   );
 }

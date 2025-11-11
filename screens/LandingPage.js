@@ -5,16 +5,13 @@ import {
   StyleSheet,
   Image,
   TouchableOpacity,
-  Dimensions,
+  useWindowDimensions,
   Animated,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-
-const { width } = Dimensions.get('window');
-const isTablet = width > 768;
 
 const illustrations = [
   {
@@ -29,6 +26,9 @@ const illustrations = [
 
 export default function LandingPage() {
   const navigation = useNavigation();
+  const { width } = useWindowDimensions();
+  const isTablet = width > 768;
+
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const logoAnim = useRef(new Animated.Value(0)).current;
@@ -52,7 +52,7 @@ export default function LandingPage() {
       });
     }, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fadeAnim]);
 
   // Animate logo on mount
   useEffect(() => {
@@ -62,7 +62,9 @@ export default function LandingPage() {
       tension: 100,
       useNativeDriver: true,
     }).start();
-  }, []);
+  }, [logoAnim]);
+
+  const styles = getStyles(isTablet, width);
 
   return (
     <LinearGradient
@@ -124,7 +126,7 @@ export default function LandingPage() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (isTablet, width) => StyleSheet.create({
   gradientBackground: { flex: 1 },
   container: { flex: 1 },
   wrapper: {

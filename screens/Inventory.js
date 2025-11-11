@@ -11,14 +11,18 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useResponsive, responsiveFontSize, responsivePadding, scaleSize } from '../utils/responsive';
 
 import { API_URL } from '../utils/config';
 
 export default function Inventory() {
+  const { isTablet, isSmallScreen, width } = useResponsive();
   const [inventory, setInventory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  
+  const styles = getStyles(isTablet, isSmallScreen, width);
 
   useEffect(() => {
     fetch(`${API_URL}/get_inventory.php`)
@@ -67,7 +71,7 @@ export default function Inventory() {
       </View>
 
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={24} color="#888" style={styles.searchIcon} />
+        <Ionicons name="search" size={scaleSize(24)} color="#888" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search inventory..."
@@ -78,7 +82,7 @@ export default function Inventory() {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#007BFF" style={{ flex: 1 }} />
+        <ActivityIndicator testID="loading-indicator" size="large" color="#007BFF" style={{ flex: 1 }} />
       ) : (
         <Animated.View style={[styles.tableContainer, { opacity: fadeAnim }]}>
           {renderHeader()}
@@ -106,98 +110,135 @@ export default function Inventory() {
   );
 }
 
-const PADDING = 16;
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F4F7FC',
-    paddingHorizontal: PADDING,
-  },
-  headerContainer: {
-    paddingVertical: PADDING,
-  },
-  header: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#2C3E50',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: PADDING,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  searchIcon: {
-    marginRight: 12,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 16,
-    fontSize: 18,
-    color: '#3A3A3A',
-  },
-  tableContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 5,
-    overflow: 'hidden',
-  },
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#2C3E50',
-    padding: PADDING,
-    borderBottomWidth: 1,
-    borderBottomColor: '#394A5D',
-  },
-  headerCell: {
-    fontWeight: 'bold',
-    fontSize: 23,
-    color: '#FFFFFF',
-    textAlign: 'left',
-    paddingHorizontal: 6,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: PADDING,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F4F8',
-  },
-  rowEven: {
-    backgroundColor: '#FFFFFF',
-  },
-  rowOdd: {
-    backgroundColor: '#F8F9FA',
-  },
-  cell: {
-    fontSize: 20,
-    color: '#34495E',
-    textAlign: 'left',
-    paddingHorizontal: 6,
-  },
-  nameCell: {
-    fontWeight: '600',
-    color: '#2C3E50',
-  },
-  lowStock: {
-    color: '#D9480F',
-    fontWeight: 'bold',
-  },
-  outOfStock: {
-    color: '#D9480F',
-    fontWeight: 'bold',
-  },
-});
+const getStyles = (isTablet, isSmallScreen, width) => {
+  const PADDING = responsivePadding(16, {
+    small: 12,
+    medium: 14,
+    large: 16,
+    tablet: 20,
+  });
+  
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: '#F4F7FC',
+      paddingHorizontal: PADDING,
+    },
+    headerContainer: {
+      paddingVertical: PADDING,
+    },
+    header: {
+      fontSize: responsiveFontSize(36, {
+        small: 28,
+        medium: 32,
+        large: 36,
+        tablet: 40,
+      }),
+      fontWeight: 'bold',
+      color: '#2C3E50',
+    },
+    searchContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 12,
+      paddingHorizontal: responsivePadding(15, {
+        small: 12,
+        medium: 14,
+        large: 15,
+        tablet: 18,
+      }),
+      marginBottom: PADDING,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+    searchIcon: {
+      marginRight: scaleSize(12),
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: responsivePadding(16, {
+        small: 12,
+        medium: 14,
+        large: 16,
+        tablet: 18,
+      }),
+      fontSize: responsiveFontSize(18, {
+        small: 14,
+        medium: 16,
+        large: 18,
+        tablet: 20,
+      }),
+      color: '#3A3A3A',
+    },
+    tableContainer: {
+      flex: 1,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 16,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 5,
+      overflow: 'hidden',
+    },
+    tableHeader: {
+      flexDirection: 'row',
+      backgroundColor: '#2C3E50',
+      padding: PADDING,
+      borderBottomWidth: 1,
+      borderBottomColor: '#394A5D',
+    },
+    headerCell: {
+      fontWeight: 'bold',
+      fontSize: responsiveFontSize(23, {
+        small: 16,
+        medium: 19,
+        large: 21,
+        tablet: 25,
+      }),
+      color: '#FFFFFF',
+      textAlign: 'left',
+      paddingHorizontal: scaleSize(6),
+    },
+    tableRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: PADDING,
+      borderBottomWidth: 1,
+      borderBottomColor: '#F0F4F8',
+    },
+    rowEven: {
+      backgroundColor: '#FFFFFF',
+    },
+    rowOdd: {
+      backgroundColor: '#F8F9FA',
+    },
+    cell: {
+      fontSize: responsiveFontSize(20, {
+        small: 14,
+        medium: 17,
+        large: 19,
+        tablet: 22,
+      }),
+      color: '#34495E',
+      textAlign: 'left',
+      paddingHorizontal: scaleSize(6),
+    },
+    nameCell: {
+      fontWeight: '600',
+      color: '#2C3E50',
+    },
+    lowStock: {
+      color: '#D9480F',
+      fontWeight: 'bold',
+    },
+    outOfStock: {
+      color: '#D9480F',
+      fontWeight: 'bold',
+    },
+  });
+};
