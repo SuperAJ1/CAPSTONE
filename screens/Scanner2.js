@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Picker } from '@react-native-picker/picker';
 import {
   View,
   Text,
@@ -24,6 +25,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
 import { useNavigation } from '@react-navigation/native';
 import { API_URL as API_BASE_URL } from '../utils/config';
+import base64 from 'base-64';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Ignore specific warnings
@@ -50,41 +52,21 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styl
         barcodeTypes: ['qr', 'ean13', 'upc_a', 'code128'],
       }}
       facing={cameraType}
-      testID="camera-view-2"
+      testID="camera-view"
     />
   );
 };
 
-export default function Scanner2(props) {
-  const { userId: propUserId, route } = props;
-  // Animated value for settings icon rotation
-  const settingsRotateAnim = useRef(new Animated.Value(0)).current;
-  const [showSettingsLabel, setShowSettingsLabel] = useState(false);
-
-  const handleSettingsPress = () => {
-    // Start rotation animation
-    Animated.sequence([
-      Animated.timing(settingsRotateAnim, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true,
-      }),
-      Animated.timing(settingsRotateAnim, {
-        toValue: 0,
-        duration: 0,
-        useNativeDriver: true,
-      }),
-    ]).start();
-    setShowSettingsLabel(true);
-    setTimeout(() => setShowSettingsLabel(false), 1800);
-    handleSettings();
-  };
-
-  const userId = propUserId ?? route?.params?.userId;
+export default function Scanner({ userId }) {
   const navigation = useNavigation();
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const styles = getStyles(isLandscape, width, height);
+  
+  // Animated value for settings icon rotation
+  const settingsRotateAnim = useRef(new Animated.Value(0)).current;
+  const [showSettingsLabel, setShowSettingsLabel] = useState(false);
+
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraType, setCameraType] = useState('front');
@@ -112,19 +94,101 @@ export default function Scanner2(props) {
   const cashShake = useRef(new Animated.Value(0)).current;
   const notifyAnim = useRef(new Animated.Value(0)).current; // 0 hidden, 1 visible
   const [notifyMsg, setNotifyMsg] = useState('');
+  const loadingProgressAnim = useRef(new Animated.Value(0)).current;
+
+  // Custom Alert Modal State
+  const [customAlert, setCustomAlert] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    type: 'info', // 'info', 'error', 'success', 'warning'
+    onConfirm: null,
+  });
+
+  // Custom alert function to replace Alert.alert
+  const showCustomAlert = useCallback((title, message, type = 'info', onConfirm = null) => {
+    setCustomAlert({
+      visible: true,
+      title,
+      message,
+      type,
+      onConfirm: onConfirm || (() => setCustomAlert(prev => ({ ...prev, visible: false }))),
+    });
+  }, []);
 
   // Receipt Modal State
   const [isReceiptVisible, setIsReceiptVisible] = useState(false);
   const [receiptDetails, setReceiptDetails] = useState(null);
+  const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
   const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
-  const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
+  
   // Previous Transactions Modal State
   const [isTransactionsModalVisible, setIsTransactionsModalVisible] = useState(false);
-  // --- PATCH: Fetch previous transactions from backend when modal opens ---
   const [previousTransactions, setPreviousTransactions] = useState([]);
   const [isTransactionsLoading, setIsTransactionsLoading] = useState(false);
   const [transactionsError, setTransactionsError] = useState("");
+  
+  // Walkthrough State
+  const [elementLayouts, setElementLayouts] = useState({});
+  const walkthroughTargets = {
+    search: useRef(null),
+    scanner: useRef(null),
+    cart: useRef(null),
+    payment: useRef(null),
+  };
+  const [walkthroughStep, setWalkthroughStep] = useState(0);
+  const [isWalkthroughVisible, setIsWalkthroughVisible] = useState(false);
+  
+  const walkthroughSteps = [
+    {
+      title: 'Search for Products',
+      description: 'Use the search bar to find products by name or code.',
+      target: 'search',
+      direction: 'right',
+      icon: 'search-outline',
+    },
+    {
+      title: 'Scan QR/Barcodes',
+      description: 'Alternatively, turn on the camera to scan product codes directly.',
+      target: 'scanner',
+      direction: 'left',
+      icon: 'scan-outline',
+    },
+    {
+      title: 'Manage Your Cart',
+      description: 'View scanned items, adjust quantities, and apply discounts here.',
+      target: 'cart',
+      direction: 'left',
+      icon: 'cart-outline',
+    },
+    {
+      title: 'Finalize Transaction',
+      description: "Enter the cash amount and press 'Complete Transaction' to finalize your purchase.",
+      target: 'payment',
+      direction: 'up',
+      icon: 'card-outline',
+    },
+  ];
+
+  const triggerShake = (anim) => {
+    Animated.sequence([
+      Animated.timing(anim, { toValue: 8, duration: 60, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -8, duration: 60, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 6, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -6, duration: 50, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 0, duration: 40, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const showNotify = (message) => {
+    setNotifyMsg(message);
+    Animated.sequence([
+      Animated.timing(notifyAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.delay(1600),
+      Animated.timing(notifyAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start();
+  };
 
   const fetchPreviousTransactions = useCallback(async () => {
     setIsTransactionsLoading(true);
@@ -164,72 +228,75 @@ export default function Scanner2(props) {
       fetchPreviousTransactions();
     }
   }, [isTransactionsModalVisible, fetchPreviousTransactions]);
-  // --- END PATCH ---
 
-  // Element Layouts for Walkthrough
-  const [elementLayouts, setElementLayouts] = useState({});
-  const walkthroughTargets = {
-    search: useRef(null),
-    scanner: useRef(null),
-    cart: useRef(null),
-    payment: useRef(null),
-  };
-
-  // Walkthrough State
-  const [walkthroughStep, setWalkthroughStep] = useState(0);
-  const [isWalkthroughVisible, setIsWalkthroughVisible] = useState(false);
-
-  const walkthroughSteps = [
-    {
-      title: 'Search for Products',
-      description: 'Use the search bar to find products by name or code.',
-      target: 'search',
-      direction: 'right',
-    },
-    {
-      title: 'Scan QR/Barcodes',
-      description: 'Alternatively, turn on the camera to scan product codes directly.',
-      target: 'scanner',
-      direction: 'left',
-    },
-    {
-      title: 'Manage Your Cart',
-      description: 'View scanned items, adjust quantities, and apply discounts here.',
-      target: 'cart',
-      direction: 'left',
-    },
-    {
-      title: 'Finalize Transaction',
-      description: "Enter the cash tendered and press 'Complete Sale' to finish.",
-      target: 'payment',
-      direction: 'up',
-    },
-  ];
+  // Animate progress bar when loading
+  useEffect(() => {
+    if (isLoading) {
+      // Reset animation
+      loadingProgressAnim.setValue(0);
+      // Create looping animation
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(loadingProgressAnim, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: false,
+          }),
+          Animated.timing(loadingProgressAnim, {
+            toValue: 0,
+            duration: 500,
+            useNativeDriver: false,
+          }),
+        ])
+      ).start();
+    }
+  }, [isLoading, loadingProgressAnim]);
 
   const measureLayouts = () => {
     for (const key in walkthroughTargets) {
       const ref = walkthroughTargets[key];
       if (ref.current) {
+        // Try measure method first (for View components)
+        if (ref.current.measure) {
         ref.current.measure((x, y, width, height, pageX, pageY) => {
+            setElementLayouts(prev => ({
+              ...prev,
+              [key]: { x: pageX, y: pageY, width, height },
+            }));
+          });
+        } else {
+          // Fallback: use getNode for ScrollView and other components
+          const node = ref.current.getNode ? ref.current.getNode() : ref.current;
+          if (node && node.measure) {
+            node.measure((x, y, width, height, pageX, pageY) => {
           setElementLayouts(prev => ({
             ...prev,
             [key]: { x: pageX, y: pageY, width, height },
           }));
         });
+          }
+        }
       }
     }
   };
 
   const startWalkthrough = () => {
     setIsSettingsModalVisible(false);
-    measureLayouts(); // Ensure layouts are measured before showing
     setWalkthroughStep(0);
     setIsWalkthroughVisible(true);
+    // Use setTimeout to ensure elements are rendered before measuring
+    setTimeout(() => {
+      measureLayouts();
+    }, 100);
   };
 
   const handleNextStep = () => {
     if (walkthroughStep < walkthroughSteps.length - 1) {
       setWalkthroughStep(walkthroughStep + 1);
+      // Re-measure layouts when moving to next step
+      setTimeout(() => {
+        measureLayouts();
+      }, 100);
     } else {
       setIsWalkthroughVisible(false);
     }
@@ -243,33 +310,28 @@ export default function Scanner2(props) {
     setIsSettingsModalVisible(true);
   };
 
+  const handleSettingsPress = () => {
+    Animated.sequence([
+      Animated.timing(settingsRotateAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }),
+      Animated.timing(settingsRotateAnim, {
+        toValue: 0,
+        duration: 0,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setShowSettingsLabel(true);
+    setTimeout(() => setShowSettingsLabel(false), 1800);
+    handleSettings();
+  };
+
   const handleLogout = useCallback(() => {
     setIsLogoutModalVisible(false);
     navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
   }, [navigation]);
-
-  const handleLayout = (name, event) => {
-    // This can be kept for other purposes or removed if only for walkthrough
-  };
-
-  const triggerShake = (anim) => {
-    Animated.sequence([
-      Animated.timing(anim, { toValue: 8, duration: 60, useNativeDriver: true }),
-      Animated.timing(anim, { toValue: -8, duration: 60, useNativeDriver: true }),
-      Animated.timing(anim, { toValue: 6, duration: 50, useNativeDriver: true }),
-      Animated.timing(anim, { toValue: -6, duration: 50, useNativeDriver: true }),
-      Animated.timing(anim, { toValue: 0, duration: 40, useNativeDriver: true }),
-    ]).start();
-  };
-
-  const showNotify = (message) => {
-    setNotifyMsg(message);
-    Animated.sequence([
-      Animated.timing(notifyAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
-      Animated.delay(1600),
-      Animated.timing(notifyAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-    ]).start();
-  };
 
   // Load sound effect for scan success
   useEffect(() => {
@@ -352,6 +414,46 @@ export default function Scanner2(props) {
     }
   };
 
+  // Format time in 12-hour format with AM/PM (without seconds)
+  const formatTime = (dateString) => {
+    if (!dateString) return '';
+    
+    // Handle different date formats
+    let date;
+    if (dateString instanceof Date) {
+      date = dateString;
+    } else if (typeof dateString === 'string') {
+      // Try to parse the date string
+      date = new Date(dateString);
+      // If parsing fails, try to handle common formats
+      if (isNaN(date.getTime())) {
+        // Try MySQL datetime format: YYYY-MM-DD HH:MM:SS
+        const mysqlMatch = dateString.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+        if (mysqlMatch) {
+          const [, year, month, day, hour, minute, second] = mysqlMatch;
+          date = new Date(year, month - 1, day, hour, minute, second);
+        } else {
+          return dateString; // Return original if we can't parse it
+        }
+      }
+    } else {
+      return '';
+    }
+    
+    if (isNaN(date.getTime())) return dateString; // Return original if invalid date
+    
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes < 10 ? `0${minutes}` : minutes;
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const year = date.getFullYear();
+    
+    return `${month}/${day}/${year} ${displayHours}:${displayMinutes} ${ampm}`;
+  };
+
   // Calculate totals
   const totalQty = scannedItems.reduce((sum, item) => sum + item.qty, 0);
   const subtotal = scannedItems.reduce(
@@ -374,10 +476,10 @@ export default function Scanner2(props) {
       if (data.status === 'success') {
         setFilteredProducts(data.data);
       } else {
-        Alert.alert('Error', data.message || 'Failed to fetch products');
+        showCustomAlert('Error', data.message || 'Failed to fetch products', 'error');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to connect to server. Please check your network and backend.');
+      showCustomAlert('Error', 'Failed to connect to server. Please check your network and backend.', 'error');
       console.error('Fetch products error:', error);
     } finally {
       setIsSearching(false);
@@ -387,7 +489,7 @@ export default function Scanner2(props) {
   // Cart management functions
   const addScannedItem = useCallback((product, matchId, source = 'manual', quantityOverride) => {
     if (product.stock <= 0) {
-      Alert.alert('Out of Stock', `${product.name} is currently out of stock.`);
+      showCustomAlert('Out of Stock', `${product.name} is currently out of stock.`, 'warning');
       return;
     }
 
@@ -417,9 +519,10 @@ export default function Scanner2(props) {
         const newQuantity = existingItem.qty + quantityToAdd;
 
         if (newQuantity > product.stock) {
-          Alert.alert(
+          showCustomAlert(
             'Stock Limit Exceeded',
-            `Cannot add ${quantityToAdd} more to cart. Only ${product.stock - existingItem.qty} of ${product.name} left in stock.`
+            `Cannot add ${quantityToAdd} more to cart. Only ${product.stock - existingItem.qty} of ${product.name} left in stock.`,
+            'warning'
           );
           return prevItems; // Don't update if stock is exceeded
         }
@@ -432,9 +535,10 @@ export default function Scanner2(props) {
       } else {
         // New item, add to cart
         if (quantityToAdd > product.stock) {
-          Alert.alert(
+          showCustomAlert(
             'Stock Limit Exceeded',
-            `Cannot add ${quantityToAdd} of ${product.name}. Only ${product.stock} left in stock.`
+            `Cannot add ${quantityToAdd} of ${product.name}. Only ${product.stock} left in stock.`,
+            'warning'
           );
           return prevItems; // Don't add if stock is exceeded
         }
@@ -528,7 +632,7 @@ export default function Scanner2(props) {
         try { candidate = decodeURIComponent(candidate); } catch (_) {}
         const normalized = candidate.replace(/-/g, '+').replace(/_/g, '/');
         let jsonStr;
-        try { jsonStr = atob(normalized); } catch (_) { return null; }
+        try { jsonStr = base64.decode(normalized); } catch (_) { return null; }
         try {
           const obj = JSON.parse(jsonStr);
           return obj && typeof obj === 'object' ? obj : null;
@@ -546,7 +650,7 @@ export default function Scanner2(props) {
           } catch (_) { return JSON.stringify(cartMap); }
         })();
         if (processedCartPayloads.current.has(sig)) {
-          Alert.alert('Already Scanned', 'This QR cart has already been added.');
+          showCustomAlert('Already Scanned', 'This QR cart has already been added.', 'info');
           return;
         }
         processedCartPayloads.current.add(sig);
@@ -589,11 +693,11 @@ export default function Scanner2(props) {
         // Add item to cart
         addScannedItem(result.data, result.data.id, 'scan');
       } else {
-        Alert.alert('Product Not Found', result.message || 'The scanned product is not in the database.');
+        showCustomAlert('Product Not Found', result.message || 'The scanned product is not in the database.', 'error');
       }
     } catch (error) {
       console.error('Scan processing error:', error);
-      Alert.alert('Error', 'Failed to verify product');
+      showCustomAlert('Error', 'Failed to verify product', 'error');
     } finally {
       setIsLoading(false);
       setTimeout(() => setScanned(false), 1000);
@@ -602,9 +706,8 @@ export default function Scanner2(props) {
 
   // Purchase completion handler
   const executePurchase = useCallback(async () => {
-  console.log('executePurchase called');
     if (scannedItems.length === 0) {
-      Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
+      showCustomAlert('Empty Cart', 'Please add items to the cart before completing.', 'warning');
       return;
     }
 
@@ -618,7 +721,7 @@ export default function Scanner2(props) {
     }
 
     if (numericCashTendered < total) {
-      Alert.alert('Insufficient Cash', 'Cash tendered is less than the total amount.');
+      showCustomAlert('Insufficient Cash', 'Cash tendered is less than the total amount.', 'error');
       return;
     }
 
@@ -655,10 +758,6 @@ export default function Scanner2(props) {
         body: JSON.stringify(payload)
       });
 
-      // Log response status and headers
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
-
       const responseText = await response.text();
       console.log('Raw response:', responseText);
 
@@ -666,12 +765,10 @@ export default function Scanner2(props) {
       try {
         result = JSON.parse(responseText);
       } catch (e) {
-        console.error('JSON parse error:', e);
         throw new Error(`Server returned invalid JSON. Response: ${responseText.substring(0, 200)}...`);
       }
 
       if (!response.ok || result.status !== 'success') {
-        console.error('API error:', result.message);
         throw new Error(result.message || 'Purchase failed on server side.');
       }
 
@@ -692,11 +789,12 @@ export default function Scanner2(props) {
 
     } catch (error) {
       console.error('Full purchase error:', error);
-      Alert.alert(
+      showCustomAlert(
         'Purchase Failed',
         error.message.includes('JSON')
           ? "There was a problem with the server's response format. Please contact support."
-          : `Error: ${error.message}`
+          : `Error: ${error.message}`,
+        'error'
       );
     } finally {
       setIsLoading(false);
@@ -704,9 +802,8 @@ export default function Scanner2(props) {
   }, [scannedItems, globalDiscount, cashTendered, total, clearCart, change, numericCashTendered, playBeep, fetchProducts, searchQuery]);
 
   const handleCompletePurchase = useCallback(() => {
-  console.log('handleCompletePurchase called');
     if (scannedItems.length === 0) {
-      Alert.alert('Empty Cart', 'Please add items to the cart before completing.');
+      showCustomAlert('Empty Cart', 'Please add items to the cart before completing.', 'warning');
       return;
     }
     setIsConfirmationModalVisible(true);
@@ -754,15 +851,279 @@ export default function Scanner2(props) {
   }
 
   // Loading modal
-  const modal = (
-    isLoading ? (
-      <View pointerEvents="none" style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <ActivityIndicator size="large" color="#C5BAFF" />
-          <Text style={styles.modalText}>Processing...</Text>
+  const renderLoadingModal = () => {
+    const progressWidth = loadingProgressAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['20%', '90%'],
+    });
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isLoading}
+        onRequestClose={() => {}}
+      >
+        <View style={styles.loadingModalOverlay}>
+          <View style={styles.loadingModalContainer}>
+            <View style={styles.loadingSpinnerContainer}>
+              <ActivityIndicator size="large" color="#7C3AED" />
+        </View>
+            <Text style={styles.loadingModalTitle}>Processing Transaction</Text>
+            <Text style={styles.loadingModalSubtitle}>Please wait while we complete your purchase...</Text>
+            <View style={styles.loadingProgressBar}>
+              <Animated.View 
+                style={[
+                  styles.loadingProgressFill,
+                  { width: progressWidth }
+                ]} 
+              />
+      </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // Custom Alert Modal
+  const renderCustomAlert = () => {
+    const getIcon = () => {
+      switch (customAlert.type) {
+        case 'error':
+          return <Ionicons name="close-circle" size={48} color="#EF4444" />;
+        case 'success':
+          return <Ionicons name="checkmark-circle" size={48} color="#10B981" />;
+        case 'warning':
+          return <Ionicons name="warning" size={48} color="#F59E0B" />;
+        default:
+          return <Ionicons name="information-circle" size={48} color="#3B82F6" />;
+      }
+    };
+
+    const getButtonColor = () => {
+      switch (customAlert.type) {
+        case 'error':
+          return '#EF4444';
+        case 'success':
+          return '#10B981';
+        case 'warning':
+          return '#F59E0B';
+        default:
+          return '#3B82F6';
+      }
+    };
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={customAlert.visible}
+        onRequestClose={() => {}}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={styles.customAlertOverlay}
+          onPress={() => {}}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={styles.customAlertContainer}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.customAlertIconContainer}>
+              {getIcon()}
+            </View>
+            <Text style={styles.customAlertTitle}>{customAlert.title}</Text>
+            <Text style={styles.customAlertMessage}>{customAlert.message}</Text>
+            <TouchableOpacity
+              style={[styles.customAlertButton, { backgroundColor: getButtonColor() }]}
+              onPress={() => {
+                if (customAlert.onConfirm) {
+                  customAlert.onConfirm();
+                }
+                setCustomAlert(prev => ({ ...prev, visible: false }));
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.customAlertButtonText}>OK</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
+  const renderReceiptModal = () => {
+    if (!isReceiptVisible || !receiptDetails) {
+      return null;
+    }
+
+
+    const { items, total, change, cashTendered, globalDiscount, subtotal } = receiptDetails;
+
+    // Calculate original subtotal (before any discounts)
+    const originalSubtotal = items.reduce(
+      (sum, item) => sum + (parseFloat(item.product.price) * item.qty),
+      0
+    );
+
+    // Calculate total item discounts
+    const totalItemDiscounts = items.reduce(
+      (sum, item) => {
+        const itemSubtotal = parseFloat(item.product.price) * item.qty;
+        const itemDiscountAmount = itemSubtotal * (item.discount / 100);
+        return sum + itemDiscountAmount;
+      },
+      0
+    );
+
+    // Calculate global discount amount
+    const globalDiscountAmount = subtotal * (parseFloat(globalDiscount || 0) / 100);
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isReceiptVisible}
+        onRequestClose={() => {
+          setIsReceiptVisible(false);
+          clearCart();
+        }}
+      >
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptModalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.receiptHeader}>
+                <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
+                <Text style={styles.receiptTitle}>Purchase Complete</Text>
+                <Text style={styles.receiptDate}>
+                  {formatTime(new Date().toISOString())}
+                </Text>
+              </View>
+
+              <View style={styles.receiptSection}>
+                <Text style={styles.receiptSectionTitle}>Summary</Text>
+                {items.map(item => {
+                  const itemPrice = parseFloat(item.product.price);
+                  const itemQty = item.qty;
+                  const itemDiscount = item.discount || 0;
+                  const itemSubtotal = itemPrice * itemQty;
+                  const itemDiscountAmount = itemSubtotal * (itemDiscount / 100);
+                  const itemTotal = itemSubtotal - itemDiscountAmount;
+                  
+                  return (
+                    <View key={item.id} style={styles.receiptItem}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={styles.receiptItemQty}>{itemQty}x</Text>
+                          <Text style={styles.receiptItemName} numberOfLines={1}>{item.product.name}</Text>
+                        </View>
+                        {itemDiscount > 0 && (
+                          <Text style={{ fontSize: 12, color: '#888', marginLeft: 30, marginTop: 2 }}>
+                            Discount: {itemDiscount}% (-₽{itemDiscountAmount.toFixed(2)})
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.receiptItemTotal}>₽{itemTotal.toFixed(2)}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+
+              <View style={styles.receiptSection}>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Subtotal</Text>
+                  <Text style={styles.receiptTotalValue}>₽{originalSubtotal.toFixed(2)}</Text>
+                </View>
+                {totalItemDiscounts > 0 && (
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Item Discounts</Text>
+                    <Text style={styles.receiptTotalValue}>-₽{totalItemDiscounts.toFixed(2)}</Text>
+                  </View>
+                )}
+                {globalDiscount > 0 && (
+                  <View style={styles.receiptTotalRow}>
+                    <Text style={styles.receiptTotalLabel}>Global Discount ({globalDiscount}%)</Text>
+                    <Text style={styles.receiptTotalValue}>-₽{globalDiscountAmount.toFixed(2)}</Text>
+                  </View>
+                )}
+                <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
+                  <Text style={styles.receiptGrandTotalLabel}>Total</Text>
+                  <Text style={styles.receiptGrandTotalValue}>₽{total.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.receiptSection}>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
+                  <Text style={styles.receiptTotalValue}>₽{cashTendered.toFixed(2)}</Text>
+                </View>
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>Change Due</Text>
+                  <Text style={styles.receiptTotalValue}>₽{change.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.receiptCloseButton}
+              onPress={() => {
+                setIsReceiptVisible(false);
+                clearCart();
+              }}
+            >
+              <Text style={styles.receiptCloseButtonText}>New Transaction</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderConfirmationModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={isConfirmationModalVisible}
+      onRequestClose={() => setIsConfirmationModalVisible(false)}
+    >
+      <View style={styles.logoutModalOverlay}>
+        <View style={styles.logoutModalContainer}>
+          <Ionicons name="help-circle-outline" size={48} color="#3498db" />
+          <Text style={styles.logoutModalTitle}>Confirm Action</Text>
+          <Text style={styles.logoutModalText}>
+            Are you done adding products?
+          </Text>
+          <View style={styles.logoutModalActions}>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, styles.cancelLogoutButton]}
+              onPress={() => setIsConfirmationModalVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, {
+                backgroundColor: '#3498db',
+                shadowColor: '#3498db',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+                elevation: 3,
+              }]}
+              onPress={() => {
+                setIsConfirmationModalVisible(false);
+                executePurchase();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>Yes, Proceed</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
-    ) : null
+    </Modal>
   );
 
   const renderSettingsModal = () => (
@@ -835,14 +1196,16 @@ export default function Scanner2(props) {
             <TouchableOpacity
               style={[styles.logoutModalButton, styles.cancelLogoutButton]}
               onPress={() => setIsLogoutModalVisible(false)}
+              activeOpacity={0.8}
             >
-              <Text style={[styles.logoutModalButtonText, { color: '#4B5563' }]}>Cancel</Text>
+              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.logoutModalButton, styles.confirmLogoutButton]}
               onPress={handleLogout}
+              activeOpacity={0.8}
             >
-              <Text style={styles.logoutModalButtonText}>Logout</Text>
+              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>Logout</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -858,110 +1221,224 @@ export default function Scanner2(props) {
 
     if (!targetLayout) return null;
 
-    // --- Smart Positioning & Arrow Logic ---
     const screenWidth = Dimensions.get('window').width;
     const screenHeight = Dimensions.get('window').height;
-    const modalWidth = 300;
-    const modalMargin = 15;
-    const arrowSize = 12;
-    const estimatedModalHeight = 160;
+    const isLandscape = screenWidth > screenHeight;
+    
+    // Responsive modal sizing
+    const baseModalWidth = Math.min(screenWidth * 0.85, 340);
+    const modalWidth = isLandscape ? Math.min(screenWidth * 0.4, 320) : baseModalWidth;
+    const modalMargin = 16;
+    const arrowSize = 14;
+    const minModalHeight = 200;
+    const maxModalHeight = isLandscape ? 220 : 240;
+    
+    // Calculate dynamic height based on content
+    const titleHeight = 60;
+    const descriptionHeight = currentStep.description.length > 60 ? 80 : 60;
+    const actionsHeight = 50;
+    const iconHeight = 50;
+    const padding = 40;
+    const progressHeight = 30;
+    const estimatedModalHeight = Math.max(
+      minModalHeight,
+      Math.min(
+        maxModalHeight,
+        titleHeight + descriptionHeight + actionsHeight + iconHeight + padding + progressHeight
+      )
+    );
 
     let modalTop, modalLeft, arrowStyles;
-
     const isHorizontalLayout = ['search', 'scanner', 'cart'].includes(currentStep.target);
 
+    // Enhanced positioning logic
     if (isHorizontalLayout) {
       const spaceRight = screenWidth - (targetLayout.x + targetLayout.width);
       const spaceLeft = targetLayout.x;
-
-      // Center vertically relative to the target
-      modalTop = targetLayout.y + (targetLayout.height / 2) - (estimatedModalHeight / 2);
-      
-      // Clamp vertical position to stay within screen bounds
-      if (modalTop < modalMargin) modalTop = modalMargin;
-      if (modalTop + estimatedModalHeight > screenHeight - modalMargin) {
-        modalTop = screenHeight - estimatedModalHeight - modalMargin;
-      }
-
-      if (spaceRight > modalWidth + modalMargin) {
-        // Place to the right
-        modalLeft = targetLayout.x + targetLayout.width + modalMargin;
-        arrowStyles = {
-          left: -arrowSize,
-          borderRightWidth: arrowSize,
-          borderRightColor: '#fff',
-        };
-      } else if (spaceLeft > modalWidth + modalMargin) {
-        // Place to the left
-        modalLeft = targetLayout.x - modalWidth - modalMargin;
-        arrowStyles = {
-          right: -arrowSize,
-          borderLeftWidth: arrowSize,
-          borderLeftColor: '#fff',
-        };
-      } else {
-        // Fallback for horizontal: place above
-        modalLeft = targetLayout.x + (targetLayout.width / 2) - (modalWidth / 2);
-        modalTop = targetLayout.y - estimatedModalHeight - modalMargin;
-        arrowStyles = {
-          bottom: -arrowSize,
-          borderTopWidth: arrowSize,
-          borderTopColor: '#fff',
-        };
-      }
-      
-      if (arrowStyles.left || arrowStyles.right) {
-        const arrowTop = targetLayout.y + (targetLayout.height / 2) - modalTop - arrowSize;
-        arrowStyles.top = arrowTop;
-      }
-      if (arrowStyles.bottom) {
-        const arrowLeft = targetLayout.x + (targetLayout.width / 2) - modalLeft - arrowSize;
-        arrowStyles.left = arrowLeft;
-      }
-
-    } else { // Vertical logic for 'payment' and fallback
       const spaceBelow = screenHeight - (targetLayout.y + targetLayout.height);
       const spaceAbove = targetLayout.y;
-
-      if (currentStep.target === 'payment' || spaceAbove > spaceBelow) {
-        // Place above
-        modalTop = targetLayout.y - estimatedModalHeight - modalMargin;
-        arrowStyles = {
-          bottom: -arrowSize,
-          borderTopWidth: arrowSize,
-          borderTopColor: '#fff',
+      
+      // Try to position horizontally first
+      if (spaceRight > modalWidth + modalMargin + arrowSize) {
+        modalLeft = targetLayout.x + targetLayout.width + modalMargin;
+        modalTop = targetLayout.y + (targetLayout.height / 2) - (estimatedModalHeight / 2);
+        arrowStyles = { 
+          left: -arrowSize, 
+          borderRightWidth: arrowSize, 
+          borderRightColor: '#fff',
+          top: estimatedModalHeight / 2 - arrowSize
+        };
+      } else if (spaceLeft > modalWidth + modalMargin + arrowSize) {
+        modalLeft = targetLayout.x - modalWidth - modalMargin;
+        modalTop = targetLayout.y + (targetLayout.height / 2) - (estimatedModalHeight / 2);
+        arrowStyles = { 
+          right: -arrowSize, 
+          borderLeftWidth: arrowSize, 
+          borderLeftColor: '#fff',
+          top: estimatedModalHeight / 2 - arrowSize
         };
       } else {
-        // Place below
-        modalTop = targetLayout.y + targetLayout.height + modalMargin;
-        arrowStyles = {
-          top: -arrowSize,
-          borderBottomWidth: arrowSize,
-          borderBottomColor: '#fff',
-        };
+        // Position above or below
+        if (spaceAbove > spaceBelow && spaceAbove > estimatedModalHeight + modalMargin) {
+          modalTop = targetLayout.y - estimatedModalHeight - modalMargin;
+          arrowStyles = { 
+            bottom: -arrowSize, 
+            borderTopWidth: arrowSize, 
+            borderTopColor: '#fff',
+            left: modalWidth / 2 - arrowSize
+          };
+        } else {
+          modalTop = targetLayout.y + targetLayout.height + modalMargin;
+          arrowStyles = { 
+            top: -arrowSize, 
+            borderBottomWidth: arrowSize, 
+            borderBottomColor: '#fff',
+            left: modalWidth / 2 - arrowSize
+          };
+        }
+        modalLeft = targetLayout.x + (targetLayout.width / 2) - (modalWidth / 2);
       }
-
-      modalLeft = targetLayout.x + (targetLayout.width / 2) - (modalWidth / 2);
-      const arrowLeft = targetLayout.x + (targetLayout.width / 2) - modalLeft - arrowSize;
-      arrowStyles.left = arrowLeft;
+    } else {
+      // Vertical positioning for payment section (prefer above since it's usually at bottom)
+      const spaceBelow = screenHeight - (targetLayout.y + targetLayout.height);
+      const spaceAbove = targetLayout.y;
+      const minGap = 80; // Increased minimum gap to prevent overlap (was 60)
+      const safeGap = 100; // Preferred gap for better visibility (was 80)
+      const clearance = 40; // Minimum clearance from target (was 20)
+      
+      // Calculate modal bottom position to check for overlap
+      const checkOverlap = (top) => {
+        const modalBottom = top + estimatedModalHeight;
+        // Ensure modal bottom is at least clearance px away from target top
+        return modalBottom <= targetLayout.y - clearance;
+      };
+      
+      // For payment section, prefer showing above if there's enough space
+      if (spaceAbove >= estimatedModalHeight + safeGap) {
+        // Position above with safe gap to prevent overlap
+        modalTop = targetLayout.y - estimatedModalHeight - safeGap;
+        // Double-check no overlap
+        if (!checkOverlap(modalTop)) {
+          modalTop = targetLayout.y - estimatedModalHeight - minGap;
+        }
+        arrowStyles = { 
+          bottom: -arrowSize, 
+          borderTopWidth: arrowSize, 
+          borderTopColor: '#fff',
+          left: modalWidth / 2 - arrowSize
+        };
+      } else if (spaceAbove >= estimatedModalHeight + minGap) {
+        // Position above with minimum gap
+        modalTop = targetLayout.y - estimatedModalHeight - minGap;
+        // Ensure no overlap
+        if (!checkOverlap(modalTop)) {
+          modalTop = Math.max(modalMargin, targetLayout.y - estimatedModalHeight - 70);
+        }
+        arrowStyles = { 
+          bottom: -arrowSize, 
+          borderTopWidth: arrowSize, 
+          borderTopColor: '#fff',
+          left: modalWidth / 2 - arrowSize
+        };
+      } else if (spaceBelow >= estimatedModalHeight + minGap) {
+        // Position below if not enough space above
+        modalTop = targetLayout.y + targetLayout.height + minGap;
+        arrowStyles = { 
+          top: -arrowSize, 
+          borderBottomWidth: arrowSize, 
+          borderBottomColor: '#fff',
+          left: modalWidth / 2 - arrowSize
+        };
+      } else {
+        // If not enough space, try positioning to the side
+        const spaceRight = screenWidth - (targetLayout.x + targetLayout.width);
+        const spaceLeft = targetLayout.x;
+        
+        if (spaceRight > modalWidth + modalMargin + arrowSize + 30) {
+          // Position to the right with extra margin
+          modalLeft = targetLayout.x + targetLayout.width + modalMargin + 15;
+          modalTop = targetLayout.y + (targetLayout.height / 2) - (estimatedModalHeight / 2);
+          arrowStyles = { 
+            left: -arrowSize, 
+            borderRightWidth: arrowSize, 
+            borderRightColor: '#fff',
+            top: estimatedModalHeight / 2 - arrowSize
+          };
+        } else if (spaceLeft > modalWidth + modalMargin + arrowSize + 30) {
+          // Position to the left with extra margin
+          modalLeft = targetLayout.x - modalWidth - modalMargin - 15;
+          modalTop = targetLayout.y + (targetLayout.height / 2) - (estimatedModalHeight / 2);
+          arrowStyles = { 
+            right: -arrowSize, 
+            borderLeftWidth: arrowSize, 
+            borderLeftColor: '#fff',
+            top: estimatedModalHeight / 2 - arrowSize
+          };
+        } else {
+          // Last resort: position above with maximum gap possible, ensure no overlap
+          const maxPossibleGap = Math.max(60, spaceAbove - estimatedModalHeight - clearance);
+          modalTop = Math.max(modalMargin, targetLayout.y - estimatedModalHeight - maxPossibleGap);
+          // Final overlap check - ensure modal bottom is well clear of target
+          const modalBottom = modalTop + estimatedModalHeight;
+          if (modalBottom >= targetLayout.y - clearance) {
+            // If still overlapping, push it higher
+            modalTop = targetLayout.y - estimatedModalHeight - 70;
+            // But don't go off screen
+            if (modalTop < modalMargin) {
+              modalTop = modalMargin;
+            }
+          }
+          arrowStyles = { 
+            bottom: -arrowSize, 
+            borderTopWidth: arrowSize, 
+            borderTopColor: '#fff',
+            left: modalWidth / 2 - arrowSize
+          };
+        }
+      }
+      
+      // Final validation: ensure modal doesn't overlap with target
+      const modalBottom = modalTop + estimatedModalHeight;
+      if (modalBottom > targetLayout.y - clearance) {
+        // Force modal higher if it's still too close
+        modalTop = Math.max(modalMargin, targetLayout.y - estimatedModalHeight - 70);
+        // Re-check after adjustment
+        const newModalBottom = modalTop + estimatedModalHeight;
+        if (newModalBottom > targetLayout.y - clearance) {
+          // If still too close, use even more gap
+          modalTop = Math.max(modalMargin, targetLayout.y - estimatedModalHeight - 90);
+        }
+      }
+      
+      // Only set modalLeft if not already set (for side positioning)
+      if (modalLeft === undefined) {
+        modalLeft = targetLayout.x + (targetLayout.width / 2) - (modalWidth / 2);
+      }
     }
 
-    // Adjust horizontal position to keep it on screen
+    // Ensure modal stays within screen bounds
     if (modalLeft + modalWidth > screenWidth - modalMargin) {
       modalLeft = screenWidth - modalWidth - modalMargin;
+      // Adjust arrow if modal was repositioned
+      if (arrowStyles.left !== undefined && !arrowStyles.right) {
+        arrowStyles.left = targetLayout.x + (targetLayout.width / 2) - modalLeft - arrowSize;
+      }
     }
     if (modalLeft < modalMargin) {
       modalLeft = modalMargin;
-    }
-    
-    // Re-calculate arrow position if modal position was adjusted
-    if (arrowStyles.left && !arrowStyles.right) { // For vertical arrows
+      if (arrowStyles.left !== undefined && !arrowStyles.right) {
         arrowStyles.left = targetLayout.x + (targetLayout.width / 2) - modalLeft - arrowSize;
+      }
     }
-    if (arrowStyles.top && !arrowStyles.bottom) { // For horizontal arrows
-        arrowStyles.top = targetLayout.y + (targetLayout.height / 2) - modalTop - arrowSize;
+    if (modalTop < modalMargin) {
+      modalTop = modalMargin;
+    }
+    if (modalTop + estimatedModalHeight > screenHeight - modalMargin) {
+      modalTop = screenHeight - estimatedModalHeight - modalMargin;
     }
 
+    // Progress indicator
+    const progress = ((walkthroughStep + 1) / walkthroughSteps.length) * 100;
 
     return (
       <Modal
@@ -975,245 +1452,445 @@ export default function Scanner2(props) {
           activeOpacity={1}
           onPress={handleSkipWalkthrough}
         >
-          {/* Highlight */}
           <View
             style={[
               styles.walkthroughHighlight,
               {
-                top: targetLayout.y,
-                left: targetLayout.x,
-                width: targetLayout.width,
-                height: targetLayout.height,
+                top: targetLayout.y - 4,
+                left: targetLayout.x - 4,
+                width: targetLayout.width + 8,
+                height: targetLayout.height + 8,
               },
             ]}
           />
-
-          {/* Modal Box */}
-          <View
+          <Animated.View
             style={[
               styles.walkthroughContainer,
               {
                 top: modalTop,
                 left: modalLeft,
                 width: modalWidth,
-                height: estimatedModalHeight
+                minHeight: estimatedModalHeight
               },
             ]}
           >
             <View style={[styles.walkthroughArrow, arrowStyles]} />
+            
+            {/* Icon */}
+            <View style={styles.walkthroughIconContainer}>
+              <Ionicons 
+                name={currentStep.icon || 'information-circle'} 
+                size={48} 
+                color="#7C3AED" 
+              />
+            </View>
+            
+            {/* Progress Indicator */}
+            <View style={styles.walkthroughProgressContainer}>
+              <View style={styles.walkthroughProgressBar}>
+                <Animated.View 
+                  style={[
+                    styles.walkthroughProgressFill,
+                    { width: `${progress}%` }
+                  ]} 
+                />
+              </View>
+              <Text style={styles.walkthroughProgressText}>
+                {walkthroughStep + 1} of {walkthroughSteps.length}
+              </Text>
+            </View>
+            
+            {/* Title */}
             <Text style={styles.walkthroughTitle}>{currentStep.title}</Text>
+            
+            {/* Description */}
             <Text style={styles.walkthroughDescription}>{currentStep.description}</Text>
+            
+            {/* Actions */}
             <View style={styles.walkthroughActions}>
-              <TouchableOpacity onPress={handleSkipWalkthrough}>
+              <TouchableOpacity 
+                style={styles.walkthroughSkipButton}
+                onPress={handleSkipWalkthrough}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.walkthroughSkipText}>Skip</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.walkthroughNextButton} onPress={handleNextStep}>
+              <TouchableOpacity 
+                style={styles.walkthroughNextButton} 
+                onPress={handleNextStep}
+                activeOpacity={0.8}
+              >
                 <Text style={styles.walkthroughNextButtonText}>
                   {walkthroughStep === walkthroughSteps.length - 1 ? 'Finish' : 'Next'}
                 </Text>
+                {walkthroughStep < walkthroughSteps.length - 1 && (
+                  <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 6 }} />
+                )}
               </TouchableOpacity>
             </View>
-          </View>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
     );
   };
-  
-  const renderReceiptModal = () => {
-    if (!isReceiptVisible || !receiptDetails) {
-      return null;
-    }
 
-    // Robust extraction for items and fields
-    const items = receiptDetails.items || receiptDetails.Items || [];
-    const total = receiptDetails.total ?? receiptDetails.Total;
-    const change = receiptDetails.change ?? receiptDetails.Change;
-    const cashTendered = receiptDetails.cashTendered ?? receiptDetails.CashTendered ?? receiptDetails.cash_tendered;
-    const globalDiscount = receiptDetails.globalDiscount ?? receiptDetails.GlobalDiscount ?? receiptDetails.global_discount;
-    const subtotal = receiptDetails.subtotal ?? receiptDetails.Subtotal;
-
-    return (
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={isReceiptVisible}
-        onRequestClose={() => {
-          setIsReceiptVisible(false);
-          clearCart();
-        }}
-      >
-        <View style={styles.receiptModalOverlay}>
-          <View style={styles.receiptModalContainer}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.receiptHeader}>
-                <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
-                <Text style={styles.receiptTitle}>Purchase Complete</Text>
-                <Text style={styles.receiptDate}>
-                  {new Date().toLocaleString()}
-                </Text>
-              </View>
-
-              <View style={styles.receiptSection}>
-                <Text style={styles.receiptSectionTitle}>Summary</Text>
-                {Array.isArray(items) && items.length > 0 ? items.map(item => (
-                  <View key={item.id || item.name || Math.random()} style={styles.receiptItem}>
-                    <Text style={styles.receiptItemQty}>{item.qty}x</Text>
-                    <Text style={styles.receiptItemName} numberOfLines={1}>{item.product?.name || item.name || item.ProductName || 'Unnamed'}</Text>
-                    <Text style={styles.receiptItemTotal}>₽{((item.product?.price ?? item.price ?? item.Price ?? 0) * item.qty * (1 - (item.discount ?? item.Discount ?? 0) / 100)).toFixed(2)}</Text>
-                  </View>
-                )) : (
-                  <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>
-                )}
-              </View>
-
-              <View style={styles.receiptSection}>
-                <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Subtotal</Text>
-                  <Text style={styles.receiptTotalValue}>₽{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
-                </View>
-                <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Discount</Text>
-                  <Text style={styles.receiptTotalValue}>{globalDiscount > 0 ? `${globalDiscount}%` : 'N/A'}</Text>
-                </View>
-                <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
-                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
-                  <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
-                </View>
-              </View>
-
-              {(cashTendered !== undefined || change !== undefined) && (
-                <View style={styles.receiptSection}>
-                  {cashTendered !== undefined && (
-                    <View style={styles.receiptTotalRow}>
-                      <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
-                      <Text style={styles.receiptTotalValue}>₽{Number(cashTendered).toFixed(2)}</Text>
-                    </View>
-                  )}
-                  {change !== undefined && (
-                    <View style={styles.receiptTotalRow}>
-                      <Text style={styles.receiptTotalLabel}>Change Due</Text>
-                      <Text style={styles.receiptTotalValue}>₽{Number(change).toFixed(2)}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
-            </ScrollView>
-            <TouchableOpacity
-              style={styles.receiptCloseButton}
-              onPress={() => {
-                setIsReceiptVisible(false);
-                clearCart();
-              }}
-            >
-              <Text style={styles.receiptCloseButtonText}>New Transaction</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    );
-  };
-
-  const renderConfirmationModal = () => (
-    <Modal
-      animationType="fade"
-      transparent={true}
-      visible={isConfirmationModalVisible}
-      onRequestClose={() => setIsConfirmationModalVisible(false)}
-    >
-      <View style={styles.logoutModalOverlay}>
-        <View style={styles.logoutModalContainer}>
-          <Ionicons name="help-circle-outline" size={48} color="#3498db" />
-          <Text style={styles.logoutModalTitle}>Confirm Action</Text>
-          <Text style={styles.logoutModalText}>
-            Are you done adding products?
-          </Text>
-          <View style={styles.logoutModalActions}>
-            <TouchableOpacity
-              style={[styles.logoutModalButton, styles.cancelLogoutButton]}
-              onPress={() => setIsConfirmationModalVisible(false)}
-            >
-              <Text style={[styles.logoutModalButtonText, { color: '#4B5563' }]}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.logoutModalButton, {backgroundColor: '#3498db'}]}
-              onPress={() => {
-                setIsConfirmationModalVisible(false);
-                executePurchase();
-              }}
-            >
-              <Text style={styles.logoutModalButtonText}>Yes, Proceed</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // PATCH: Update modal to show loading and error states, and accept new props
-  function RenderTransactionsModal({ isVisible, onClose, previousTransactions, isLoading, error }) {
+  // RenderTransactionsModal component
+  function RenderTransactionsModal({ isVisible, onClose, previousTransactions, isLoading, error, filteredProducts, userId, onTransactionUpdated }) {
     const [selectedTx, setSelectedTx] = useState(null);
+    const [editedItems, setEditedItems] = useState([]);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+    const [isSaveConfirmationVisible, setIsSaveConfirmationVisible] = useState(false);
+    const [productPickerVisible, setProductPickerVisible] = useState(false);
+    const [pickerItemIndex, setPickerItemIndex] = useState(null);
+    const [selectedProductId, setSelectedProductId] = useState(null);
+    const [productPickerSearchQuery, setProductPickerSearchQuery] = useState('');
+    const [startDate, setStartDate] = useState(null);
+    const [endDate, setEndDate] = useState(null);
+    const [showStartPicker, setShowStartPicker] = useState(false);
+    const [showEndPicker, setShowEndPicker] = useState(false);
+    const [isAdditionalPaymentModalVisible, setIsAdditionalPaymentModalVisible] = useState(false);
+    const [additionalPaymentAmount, setAdditionalPaymentAmount] = useState('');
+    const [balanceDue, setBalanceDue] = useState(0);
 
-    // Transaction details modal
+    const groupEditedItems = (items) => {
+      const grouped = {};
+      items.forEach((item) => {
+        let productId = item.inventory_id || item.id || item.product_id || item.productId;
+        if (!productId && item.name && filteredProducts && filteredProducts.length > 0) {
+          const foundProduct = filteredProducts.find(p => p.name === item.name);
+          if (foundProduct) productId = foundProduct.id;
+        }
+        if (!productId) return;
+        const productIdStr = productId.toString();
+        if (!grouped[productIdStr]) {
+          const price = item.price_each || item.price || item.Price || item.priceEach || 0;
+          const discount = item.discount_percent || item.discount || item.Discount || item.discountPercent || 0;
+          grouped[productIdStr] = { product_id: productIdStr, quantity: 0, price: Number(price), discount: Number(discount) };
+        }
+        grouped[productIdStr].quantity += (item.quantity || 1);
+      });
+      return Object.values(grouped);
+    };
+
+    const updateTransaction = useCallback(async (additionalPayment = 0) => {
+      if (!selectedTx || !selectedTx.id) {
+        showCustomAlert('Error', 'Transaction ID is missing', 'error');
+        return;
+      }
+      setIsSaving(true);
+      try {
+        const itemsToGroup = editedItems.length > 0 ? editedItems : (selectedTx.items || []);
+        if (itemsToGroup.length === 0) {
+          showCustomAlert('Error', 'No items to update.', 'error');
+          setIsSaving(false);
+          return;
+        }
+        const groupedItems = groupEditedItems(itemsToGroup);
+        if (groupedItems.length === 0) {
+          showCustomAlert('Error', 'Failed to group items.', 'error');
+          setIsSaving(false);
+          return;
+        }
+        const payload = {
+          transaction_id: selectedTx.id,
+          items: groupedItems,
+          global_discount: selectedTx.global_discount ?? selectedTx.globalDiscount ?? 0,
+          cash_tendered: selectedTx.cash_tendered ?? selectedTx.cashTendered ?? 0,
+          user_id: userId || 1,
+        };
+        
+        // Add additional payment if provided
+        if (additionalPayment > 0) {
+          payload.additional_payment = additionalPayment;
+        }
+        
+        const response = await fetch(`${API_BASE_URL}/update_transaction.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const responseText = await response.text();
+        let result;
+        try {
+          const jsonStartIndex = responseText.indexOf('{');
+          if (jsonStartIndex === -1) throw new Error('No JSON found.');
+          result = JSON.parse(responseText.substring(jsonStartIndex));
+        } catch (e) {
+          throw new Error(`Invalid JSON: ${responseText.substring(0, 200)}...`);
+        }
+        if (!response.ok || result.status !== 'success') {
+          throw new Error(result.message || 'Update failed.');
+        }
+        
+        // Check if additional payment is required
+        const data = result.data || {};
+        let balanceDueAmount = data.balance_due || 0;
+        const requiresAdditionalPayment = data.requires_additional_payment || false;
+        const totalAmount = data.total_amount || 0;
+        const cashTendered = data.cash_tendered || 0;
+        
+        // Calculate balance_due if not provided but cash_tendered < total_amount
+        if (balanceDueAmount === 0 && totalAmount > 0 && cashTendered > 0) {
+          const calculatedBalance = totalAmount - cashTendered;
+          if (calculatedBalance > 0) {
+            balanceDueAmount = calculatedBalance;
+            console.log('Calculated balance_due from total and cash_tendered:', balanceDueAmount);
+          }
+        }
+        
+        // Debug logging
+        console.log('Update Transaction Response:', {
+          balanceDueAmount,
+          requiresAdditionalPayment,
+          additionalPayment,
+          totalAmount,
+          cashTendered,
+          changeDue: data.change_due,
+          fullData: JSON.stringify(data, null, 2)
+        });
+        
+        // Show modal if balance_due exists (even if requires_additional_payment flag is missing)
+        if (balanceDueAmount > 0 && additionalPayment === 0) {
+          // Show modal for additional payment
+          console.log('Showing additional payment modal with balance:', balanceDueAmount);
+          // Close edit modal first to avoid modal conflicts
+          setIsEditModalVisible(false);
+          setBalanceDue(balanceDueAmount);
+          setIsAdditionalPaymentModalVisible(true);
+          setIsSaving(false);
+          return;
+        }
+        
+        // Success - transaction updated
+        const changeDue = data.change_due || 0;
+        const message = changeDue > 0 
+          ? `Transaction updated successfully.\n\nChange Due: ₽${changeDue.toFixed(2)}`
+          : 'Transaction updated successfully.';
+        
+        showCustomAlert('Success', message, 'success', () => {
+            setIsEditModalVisible(false);
+            setIsAdditionalPaymentModalVisible(false);
+            setSelectedTx(null);
+            setEditedItems([]);
+            setAdditionalPaymentAmount('');
+            setBalanceDue(0);
+            if (onTransactionUpdated) onTransactionUpdated();
+        });
+      } catch (error) {
+        // Check if error is about insufficient cash - show modal instead of alert
+        const errorMessage = error.message || '';
+        if (errorMessage.toLowerCase().includes('cash tendered') && 
+            errorMessage.toLowerCase().includes('less than')) {
+          
+          // Try to calculate balance_due from the transaction
+          if (selectedTx) {
+            // Calculate new total from edited items
+            const itemsToCalculate = editedItems.length > 0 ? editedItems : (selectedTx.items || []);
+            let newSubtotal = 0;
+            let totalItemDiscount = 0;
+            
+            itemsToCalculate.forEach(item => {
+              const price = item.price_each || item.price || 0;
+              const qty = item.quantity || 1;
+              const discount = item.discount_percent || item.discount || 0;
+              const itemSubtotal = price * qty;
+              const itemDiscountAmount = itemSubtotal * (discount / 100);
+              newSubtotal += itemSubtotal;
+              totalItemDiscount += itemDiscountAmount;
+            });
+            
+            const globalDiscount = selectedTx.global_discount ?? selectedTx.globalDiscount ?? 0;
+            const globalDiscountAmount = newSubtotal * (globalDiscount / 100);
+            const newTotal = newSubtotal - totalItemDiscount - globalDiscountAmount;
+            const originalCash = selectedTx.cash_tendered ?? selectedTx.cashTendered ?? 0;
+            const balanceDue = newTotal - originalCash;
+            
+            if (balanceDue > 0) {
+              console.log('Calculated balance_due from error:', balanceDue);
+              setIsEditModalVisible(false);
+              setBalanceDue(balanceDue);
+              setIsAdditionalPaymentModalVisible(true);
+              setIsSaving(false);
+              return;
+            }
+          }
+        }
+        
+        // For other errors, show alert
+        showCustomAlert('Update Failed', error.message, 'error');
+      } finally {
+        setIsSaving(false);
+      }
+    }, [selectedTx, editedItems, userId, onTransactionUpdated, filteredProducts, showCustomAlert]);
+
+    useEffect(() => {
+      if (selectedTx) {
+        const items = Array.isArray(selectedTx.items) ? selectedTx.items : [];
+        const flattened = [];
+        items.forEach((item, idx) => {
+          const productId = item.inventory_id || item.id || item.product_id || item.productId;
+          if (!productId) {
+            if (item.name && filteredProducts && filteredProducts.length > 0) {
+              const foundProduct = filteredProducts.find(p => p.name === item.name);
+              if (foundProduct) {
+                const baseItem = {
+                  ...item,
+                  id: foundProduct.id,
+                  product_id: foundProduct.id,
+                  inventory_id: foundProduct.id,
+                  name: item.name || foundProduct.name || '',
+                  price_each: item.price_each || item.price || foundProduct.price || 0,
+                  price: item.price || item.price_each || foundProduct.price || 0,
+                  discount_percent: item.discount_percent || item.discount || 0,
+                  discount: item.discount || item.discount_percent || 0,
+                };
+                for (let i = 0; i < (item.quantity || 1); i++) {
+                  flattened.push({ ...baseItem, uniqueId: `${baseItem.id}-${idx}-${i}`, originalIdx: idx, splitIdx: i, quantity: 1 });
+                }
+                return;
+              }
+            }
+            return;
+          }
+          const baseItem = {
+            ...item,
+            id: productId,
+            product_id: productId,
+            inventory_id: productId,
+            name: item.name || item.product_name || '',
+            price_each: item.price_each || item.price || 0,
+            price: item.price || item.price_each || 0,
+            discount_percent: item.discount_percent || item.discount || 0,
+            discount: item.discount || item.discount_percent || 0,
+          };
+          for (let i = 0; i < (item.quantity || 1); i++) {
+            flattened.push({ ...baseItem, uniqueId: `${baseItem.id}-${idx}-${i}`, originalIdx: idx, splitIdx: i, quantity: 1 });
+          }
+        });
+        setEditedItems(flattened);
+      } else {
+        setEditedItems([]);
+      }
+    }, [selectedTx, filteredProducts]);
+
     const renderDetailsModal = () => {
-  if (!selectedTx) return null;
-  // Debug: log selected transaction object
-  console.log('SelectedTx:', selectedTx);
-      // Extract details robustly
-      const items = selectedTx.items || selectedTx.Items || [];
-      const total = selectedTx.total ?? selectedTx.Total;
-  const change = selectedTx.change_due ?? selectedTx.change ?? selectedTx.Change;
-  const cashTendered = selectedTx.cash_tendered ?? selectedTx.cashTendered ?? selectedTx.CashTendered;
-      const globalDiscount = selectedTx.globalDiscount ?? selectedTx.GlobalDiscount ?? selectedTx.global_discount;
-      const subtotal = selectedTx.subtotal ?? selectedTx.Subtotal;
+      if (!selectedTx) return null;
+      const items = editedItems.length > 0 ? editedItems : (Array.isArray(selectedTx.items) ? selectedTx.items : []);
+      const total = selectedTx.total ?? 0;
+      const cashTendered = selectedTx.cash_tendered ?? selectedTx.cashTendered ?? 0;
+      const globalDiscount = selectedTx.globalDiscount ?? selectedTx.global_discount ?? 0;
+      const subtotal = selectedTx.subtotal ?? selectedTx.Subtotal ?? 0;
       const date = selectedTx.date ?? selectedTx.Date;
+      
+      // Group items by product ID/name and sum quantities
+      const groupItemsForDisplay = (itemsArray) => {
+        const grouped = {};
+        itemsArray.forEach((item) => {
+          const productId = item.id || item.product_id || item.inventory_id || item.name;
+          const productKey = productId?.toString() || item.name || 'unknown';
+          
+          if (!grouped[productKey]) {
+            const price = item.price_each || item.price || 0;
+            const discount = item.discount_percent || item.discount || 0;
+            grouped[productKey] = {
+              id: productId,
+              name: item.name || item.product_name || '',
+              price: price,
+              quantity: 0,
+              discount: discount,
+            };
+          }
+          grouped[productKey].quantity += (item.quantity || 1);
+        });
+        return Object.values(grouped);
+      };
+      
+      const groupedItems = groupItemsForDisplay(items);
+      
       return (
-        <Modal
-          animationType="fade"
-          transparent={true}
-          visible={!!selectedTx}
-          onRequestClose={() => setSelectedTx(null)}
-        >
-          <View style={modalStyles.overlay}>
-            <View style={[modalStyles.container, {paddingVertical: 24, paddingHorizontal: 16, maxHeight: '80%'}]}>
+        <>
+        <Modal animationType="fade" transparent={true} visible={!!selectedTx} onRequestClose={() => setSelectedTx(null)}>
+          <View style={styles.receiptModalOverlay}>
+            <View style={styles.receiptModalContainer}>
+              <TouchableOpacity style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }} onPress={() => setSelectedTx(null)}>
+                <Ionicons name="close" size={28} color="#888" />
+              </TouchableOpacity>
               <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={{alignItems: 'center', marginBottom: 12}}>
                   <Ionicons name="checkmark-circle" size={50} color="#7C3AED" />
                   <Text style={[modalStyles.title, {marginBottom: 2}]}>Transaction Details</Text>
-                  <Text style={{fontSize: 16, color: '#37353E', fontWeight: '500', marginBottom: 8}}>{date}</Text>
+                  <Text style={{fontSize: 16, color: '#37353E', fontWeight: '500', marginBottom: 8}}>{date ? formatTime(date) : ''}</Text>
                 </View>
-
                 <View style={styles.receiptSection}>
                   <Text style={styles.receiptSectionTitle}>Summary</Text>
-                  {Array.isArray(items) && items.length > 0 ? items.map(item => (
-                    <View key={item.name + item.quantity} style={styles.receiptItem}>
-                      <Text style={styles.receiptItemQty}>{item.quantity}x</Text>
-                      <Text style={styles.receiptItemName} numberOfLines={1}>{item.name}</Text>
-                      <Text style={styles.receiptItemTotal}>
-                        ₽{(item.price_each * item.quantity * (1 - (item.discount_percent || 0))).toFixed(2)}
-                      </Text>
-                    </View>
-                  )) : (
-                    <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>
-                  )}
+                  {groupedItems.length > 0 ? groupedItems.map((item, idx) => {
+                    const itemPrice = item.price || 0;
+                    const itemQty = item.quantity || 1;
+                    const itemDiscount = item.discount || 0;
+                    const itemSubtotal = itemPrice * itemQty;
+                    const itemDiscountAmount = itemSubtotal * (itemDiscount / 100);
+                    const itemTotal = itemSubtotal - itemDiscountAmount;
+                    return (
+                      <View key={`${item.id || item.name}-${idx}`} style={styles.receiptItem}>
+                        <View style={{flex: 1}}>
+                          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                            <Text style={styles.receiptItemQty}>{itemQty}x</Text>
+                            <Text style={styles.receiptItemName} numberOfLines={1}>{item.name}</Text>
+                          </View>
+                          {itemDiscount > 0 && (
+                            <Text style={{fontSize: 12, color: '#888', marginLeft: 30, marginTop: 2}}>
+                              Discount: {itemDiscount}% (-₽{itemDiscountAmount.toFixed(2)})
+                            </Text>
+                          )}
+                        </View>
+                        <Text style={styles.receiptItemTotal}>₽{itemTotal.toFixed(2)}</Text>
+                      </View>
+                    );
+                  }) : <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>}
                 </View>
-
                 <View style={styles.receiptSection}>
                   <View style={styles.receiptTotalRow}>
                     <Text style={styles.receiptTotalLabel}>Subtotal</Text>
                     <Text style={styles.receiptTotalValue}>₽{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
                   </View>
-                  <View style={styles.receiptTotalRow}>
-                    <Text style={styles.receiptTotalLabel}>Discount</Text>
-                    <Text style={styles.receiptTotalValue}>{globalDiscount > 0 ? `${globalDiscount}%` : 'N/A'}</Text>
-                  </View>
+                  {(() => {
+                    let originalSubtotal = 0;
+                    let totalItemDiscount = 0;
+                    if (groupedItems.length > 0) {
+                      groupedItems.forEach(item => {
+                        const itemPrice = item.price || 0;
+                        const itemQty = item.quantity || 1;
+                        const itemDiscount = item.discount || 0;
+                        const itemSubtotal = itemPrice * itemQty;
+                        originalSubtotal += itemSubtotal;
+                        totalItemDiscount += itemSubtotal * (itemDiscount / 100);
+                      });
+                    }
+                    const baseSubtotal = originalSubtotal > 0 ? originalSubtotal : (subtotal || 0);
+                    const globalDiscountAmount = baseSubtotal > 0 && globalDiscount > 0 ? baseSubtotal * (globalDiscount / 100) : 0;
+                    return (
+                      <>
+                        {totalItemDiscount > 0 && (
+                          <View style={styles.receiptTotalRow}>
+                            <Text style={styles.receiptTotalLabel}>Item Discounts</Text>
+                            <Text style={styles.receiptTotalValue}>-₽{totalItemDiscount.toFixed(2)}</Text>
+                          </View>
+                        )}
+                        {globalDiscount > 0 && (
+                          <View style={styles.receiptTotalRow}>
+                            <Text style={styles.receiptTotalLabel}>Global Discount ({globalDiscount}%)</Text>
+                            <Text style={styles.receiptTotalValue}>-₽{globalDiscountAmount.toFixed(2)}</Text>
+                          </View>
+                        )}
+                      </>
+                    );
+                  })()}
                   <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
                     <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
                     <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
                   </View>
                 </View>
-
                 <View style={styles.receiptSection}>
                   <View style={styles.receiptTotalRow}>
                     <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
@@ -1224,27 +1901,541 @@ export default function Scanner2(props) {
                     <Text style={styles.receiptTotalValue}>₽{Number(selectedTx.change_due ?? 0).toFixed(2)}</Text>
                   </View>
                 </View>
-
                 <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
               </ScrollView>
               <TouchableOpacity
-                style={modalStyles.closeButton}
-                onPress={() => setSelectedTx(null)}
+                style={[modalStyles.closeButton, {marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 18}]}
+                onPress={() => setIsEditModalVisible(true)}
               >
-                <Text style={modalStyles.closeButtonText}>Close</Text>
+                <Ionicons name="create-outline" size={20} color="#fff" style={{marginRight: 8}} />
+                <Text style={[modalStyles.closeButtonText, {color: '#fff', fontWeight: '600'}]}>Edit</Text>
               </TouchableOpacity>
+              <Modal animationType="slide" transparent={true} visible={isEditModalVisible} onRequestClose={() => setIsEditModalVisible(false)}>
+                <View style={modalStyles.overlay}>
+                  <View style={[modalStyles.container, {padding: 20, maxWidth: 350, alignSelf: 'center'}]}>
+                    <Text style={[modalStyles.title, {marginBottom: 16}]}>Edit Purchased Item</Text>
+                    <Text style={{marginBottom: 8}}>Purchased Items</Text>
+                    {items.length > 0 ? (
+                      <View style={{marginBottom: 16}}>
+                        {items.map((item, idx) => (
+                          <TouchableOpacity
+                            key={item.uniqueId || `${item.id || idx}-${idx}`}
+                            style={{borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 14, marginBottom: 10, backgroundColor: '#FAFAFA', flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start'}}
+                            onPress={() => {
+                              setPickerItemIndex({itemIdx: idx, uniqueId: item.uniqueId, originalIdx: item.originalIdx, splitIdx: item.splitIdx});
+                              setSelectedProductId(null);
+                              setProductPickerVisible(true);
+                            }}
+                          >
+                            <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 24}}>{item.name}</Text>
+                            <Text style={{fontSize: 15, color: '#555'}}>Qty: 1</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ) : <Text style={{color: '#888'}}>No items to edit.</Text>}
+                    <Modal animationType="slide" transparent={true} visible={productPickerVisible} onRequestClose={() => {
+                      setProductPickerVisible(false);
+                      setProductPickerSearchQuery('');
+                      setSelectedProductId(null);
+                    }}>
+                      <View style={{flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center'}}>
+                        <View style={{backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '90%', maxWidth: 400, maxHeight: '80%'}}>
+                          <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16}}>
+                            <Text style={{fontSize: 20, fontWeight: 'bold', color: '#1A202C'}}>Select New Product</Text>
+                            <TouchableOpacity onPress={() => {
+                              setProductPickerVisible(false);
+                              setProductPickerSearchQuery('');
+                              setSelectedProductId(null);
+                            }}>
+                              <Ionicons name="close" size={24} color="#666" />
+                            </TouchableOpacity>
+                          </View>
+                          
+                          {/* Search Input */}
+                          <View style={{flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', borderRadius: 10, paddingHorizontal: 12, marginBottom: 16, borderWidth: 1, borderColor: '#E5E7EB'}}>
+                            <Ionicons name="search" size={20} color="#9CA3AF" style={{marginRight: 8}} />
+                            <TextInput
+                              style={{flex: 1, paddingVertical: 12, fontSize: 16, color: '#1A202C'}}
+                              placeholder="Search products..."
+                              placeholderTextColor="#9CA3AF"
+                              value={productPickerSearchQuery}
+                              onChangeText={setProductPickerSearchQuery}
+                              autoFocus={true}
+                            />
+                            {productPickerSearchQuery.length > 0 && (
+                              <TouchableOpacity onPress={() => setProductPickerSearchQuery('')}>
+                                <Ionicons name="close-circle" size={20} color="#9CA3AF" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+
+                          {/* Product List */}
+                          <View style={{maxHeight: 300, marginBottom: 16}}>
+                            {(() => {
+                              const searchLower = productPickerSearchQuery.toLowerCase();
+                              const filtered = Array.isArray(filteredProducts) 
+                                ? filteredProducts.filter(product => 
+                                    product.name?.toLowerCase().includes(searchLower) ||
+                                    product.category?.toLowerCase().includes(searchLower)
+                                  )
+                                : [];
+                              
+                              if (filtered.length === 0) {
+                                return (
+                                  <View style={{padding: 20, alignItems: 'center'}}>
+                                    <Ionicons name="search-outline" size={48} color="#9CA3AF" />
+                                    <Text style={{color: '#9CA3AF', fontSize: 16, marginTop: 12}}>
+                                      {productPickerSearchQuery ? 'No products found' : 'No products available'}
+                                    </Text>
+                                  </View>
+                                );
+                              }
+                              
+                              return (
+                                <FlatList
+                                  data={filtered}
+                                  keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+                                  renderItem={({ item }) => {
+                                    const isSelected = selectedProductId === item.id;
+                                    const stock = item.stock ?? 0;
+                                    const isOutOfStock = stock <= 0;
+                                    const isLowStock = stock > 0 && stock <= 10;
+                                    
+                                    // Stock status colors
+                                    const stockColor = isOutOfStock ? '#EF4444' : isLowStock ? '#F59E0B' : '#10B981';
+                                    const stockBgColor = isOutOfStock ? '#FEE2E2' : isLowStock ? '#FEF3C7' : '#D1FAE5';
+                                    
+                                    return (
+                            <TouchableOpacity
+                                        style={{
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          padding: 14,
+                                          marginBottom: 8,
+                                          backgroundColor: isOutOfStock ? '#F9FAFB' : (isSelected ? '#F3F0FF' : '#FAFAFA'),
+                                          borderRadius: 10,
+                                          borderWidth: 1,
+                                          borderColor: isOutOfStock ? '#E5E7EB' : (isSelected ? '#7C3AED' : '#E5E7EB'),
+                                          opacity: isOutOfStock ? 0.6 : 1,
+                                        }}
+                                        onPress={() => {
+                                          if (!isOutOfStock) {
+                                            setSelectedProductId(item.id);
+                                          }
+                                        }}
+                                        disabled={isOutOfStock}
+                                      >
+                                        <View style={{flex: 1}}>
+                                          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 6}}>
+                                            <Text style={{
+                                              fontSize: 16,
+                                              fontWeight: '600',
+                                              color: isOutOfStock ? '#9CA3AF' : '#1A202C',
+                                              flex: 1,
+                                            }}>
+                                              {item.name}
+                                            </Text>
+                                            {isOutOfStock && (
+                                              <View style={{
+                                                backgroundColor: '#FEE2E2',
+                                                paddingHorizontal: 8,
+                                                paddingVertical: 4,
+                                                borderRadius: 4,
+                                                marginLeft: 8,
+                                              }}>
+                                                <Text style={{fontSize: 11, fontWeight: '600', color: '#EF4444'}}>
+                                                  OUT OF STOCK
+                                                </Text>
+                                              </View>
+                                            )}
+                                          </View>
+                                          
+                                          <View style={{flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap'}}>
+                                            <Text style={{fontSize: 14, color: isOutOfStock ? '#9CA3AF' : '#6B7280', fontWeight: '500', marginRight: 8}}>
+                                              ₽{parseFloat(item.price_each || item.price || 0).toFixed(2)}
+                                            </Text>
+                                            
+                                            {/* Stock Badge */}
+                                            <View style={{
+                                              backgroundColor: stockBgColor,
+                                              paddingHorizontal: 8,
+                                              paddingVertical: 4,
+                                              borderRadius: 4,
+                                              flexDirection: 'row',
+                                              alignItems: 'center',
+                                              marginRight: 8,
+                                            }}>
+                                              <Ionicons 
+                                                name={isOutOfStock ? 'close-circle' : isLowStock ? 'warning' : 'checkmark-circle'} 
+                                                size={12} 
+                                                color={stockColor}
+                                                style={{marginRight: 4}}
+                                              />
+                                              <Text style={{
+                                                fontSize: 12,
+                                                fontWeight: '600',
+                                                color: stockColor,
+                                              }}>
+                                                Stock: {stock}
+                                              </Text>
+                                            </View>
+                                            
+                                            {item.category && (
+                                              <Text style={{
+                                                fontSize: 12,
+                                                color: '#9CA3AF',
+                                                backgroundColor: '#F3F4F6',
+                                                paddingHorizontal: 8,
+                                                paddingVertical: 4,
+                                                borderRadius: 4,
+                                              }}>
+                                                {item.category}
+                                              </Text>
+                                            )}
+                                          </View>
+                                        </View>
+                                        
+                                        {!isOutOfStock && isSelected && (
+                                          <Ionicons name="checkmark-circle" size={24} color="#7C3AED" style={{marginLeft: 8}} />
+                                        )}
+                                        {isOutOfStock && (
+                                          <Ionicons name="close-circle" size={24} color="#D1D5DB" style={{marginLeft: 8}} />
+                                        )}
+                                      </TouchableOpacity>
+                                    );
+                                  }}
+                                  showsVerticalScrollIndicator={true}
+                                />
+                              );
+                            })()}
+                          </View>
+
+                          {/* Action Buttons */}
+                          <View style={{flexDirection: 'row', justifyContent: 'flex-end', width: '100%'}}>
+                            <TouchableOpacity
+                              style={{
+                                paddingVertical: 14,
+                                paddingHorizontal: 24,
+                                borderRadius: 10,
+                                marginRight: 12,
+                                backgroundColor: '#F3F4F6',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: 100,
+                              }}
+                              onPress={() => {
+                                setProductPickerVisible(false);
+                                setProductPickerSearchQuery('');
+                                setSelectedProductId(null);
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{color: '#6B7280', fontWeight: '600', fontSize: 16}}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: selectedProductId ? '#7C3AED' : '#D1D5DB',
+                                borderRadius: 10,
+                                paddingVertical: 14,
+                                paddingHorizontal: 24,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: 100,
+                                shadowColor: selectedProductId ? '#7C3AED' : 'transparent',
+                                shadowOffset: { width: 0, height: 2 },
+                                shadowOpacity: 0.2,
+                                shadowRadius: 4,
+                                elevation: 3,
+                              }}
+                              disabled={!selectedProductId}
+                              onPress={() => {
+                                if (selectedProductId && pickerItemIndex !== null) {
+                                  const searchLower = productPickerSearchQuery.toLowerCase();
+                                  const filtered = Array.isArray(filteredProducts) 
+                                    ? filteredProducts.filter(product => 
+                                        product.name?.toLowerCase().includes(searchLower) ||
+                                        product.category?.toLowerCase().includes(searchLower)
+                                      )
+                                    : [];
+                                  const selectedProduct = filtered.find(p => p.id === selectedProductId);
+                                  if (selectedProduct) {
+                                    // Check if product is out of stock
+                                    const stock = selectedProduct.stock ?? 0;
+                                    if (stock <= 0) {
+                                      showCustomAlert('Out of Stock', `${selectedProduct.name} is currently out of stock and cannot be selected.`, 'warning');
+                                      return;
+                                    }
+                                    setEditedItems(prevItems => {
+                                      const newItems = [...prevItems];
+                                      const itemToUpdate = newItems[pickerItemIndex.itemIdx];
+                                      if (itemToUpdate) {
+                                        const priceValue = selectedProduct.price_each ?? selectedProduct.price ?? 0;
+                                        newItems[pickerItemIndex.itemIdx] = {
+                                          ...itemToUpdate,
+                                          name: selectedProduct.name,
+                                          id: selectedProduct.id,
+                                          product_id: selectedProduct.id,
+                                          inventory_id: selectedProduct.id,
+                                          price_each: priceValue,
+                                          price: priceValue,
+                                        };
+                                      }
+                                      return newItems;
+                                    });
+                                  }
+                                }
+                                setProductPickerVisible(false);
+                                setProductPickerSearchQuery('');
+                                setSelectedProductId(null);
+                                setPickerItemIndex(null);
+                              }}
+                            >
+                              <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 16}}>Select</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    </Modal>
+                    <View style={{flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 20}}>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          backgroundColor: isSaving ? '#9CA3AF' : '#111',
+                          paddingVertical: 14,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 12,
+                          shadowColor: isSaving ? 'transparent' : '#111',
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.2,
+                          shadowRadius: 4,
+                          elevation: 3,
+                        }}
+                        onPress={() => setIsSaveConfirmationVisible(true)}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        {isSaving ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={{color: '#fff', fontWeight: '600', fontSize: 16}}>Save</Text>
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          backgroundColor: '#E5E7EB',
+                          paddingVertical: 14,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        onPress={() => setIsEditModalVisible(false)}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+              
+              {/* Save Confirmation Modal */}
+              <Modal
+                animationType="fade"
+                transparent={true}
+                visible={isSaveConfirmationVisible}
+                onRequestClose={() => setIsSaveConfirmationVisible(false)}
+              >
+                <View style={modalStyles.overlay}>
+                  <View style={[modalStyles.container, {padding: 24, maxWidth: 340}]}>
+                    <View style={{alignItems: 'center', marginBottom: 20}}>
+                      <Ionicons name="help-circle" size={48} color="#3B82F6" />
+                      <Text style={[modalStyles.title, {marginTop: 16, marginBottom: 8}]}>Confirm Save</Text>
+                      <Text style={{fontSize: 16, color: '#667085', textAlign: 'center', lineHeight: 22}}>
+                        Are you sure you want to save the changes to this transaction?
+                      </Text>
+                    </View>
+                    <View style={{flexDirection: 'row', justifyContent: 'space-between', width: '100%'}}>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          backgroundColor: '#E5E7EB',
+                          paddingVertical: 14,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 12,
+                        }}
+                        onPress={() => setIsSaveConfirmationVisible(false)}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          backgroundColor: isSaving ? '#9CA3AF' : '#3B82F6',
+                          paddingVertical: 14,
+                          paddingHorizontal: 20,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          shadowColor: isSaving ? 'transparent' : '#3B82F6',
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.2,
+                          shadowRadius: 4,
+                          elevation: 3,
+                        }}
+                        onPress={() => {
+                          setIsSaveConfirmationVisible(false);
+                          updateTransaction();
+                        }}
+                        disabled={isSaving}
+                        activeOpacity={0.8}
+                      >
+                        {isSaving ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={{color: '#fff', fontWeight: '600', fontSize: 16}}>Confirm</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
             </View>
           </View>
         </Modal>
+        
+        {/* Additional Payment Modal */}
+        <Modal 
+          animationType="slide" 
+          transparent={true} 
+          visible={isAdditionalPaymentModalVisible} 
+          onRequestClose={() => setIsAdditionalPaymentModalVisible(false)}
+        >
+          <View style={modalStyles.overlay}>
+            <View style={[modalStyles.container, {padding: 24, maxWidth: 400, width: '90%'}]}>
+              <View style={{alignItems: 'center', marginBottom: 20}}>
+                <Ionicons name="alert-circle" size={50} color="#F59E0B" />
+                <Text style={[modalStyles.title, {marginTop: 12, marginBottom: 8}]}>Additional Payment Required</Text>
+                <Text style={{fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 8}}>
+                  The updated product price exceeds the previous cash tendered.
+                </Text>
+                <Text style={{fontSize: 18, color: '#7C3AED', fontWeight: 'bold', marginTop: 8}}>
+                  Balance Due: ₽{balanceDue.toFixed(2)}
+                </Text>
+              </View>
+              
+              <View style={{marginBottom: 20}}>
+                <Text style={{fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 8}}>
+                  Enter Additional Payment Amount:
+                </Text>
+                <TextInput
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#D1D5DB',
+                    borderRadius: 8,
+                    padding: 12,
+                    fontSize: 18,
+                    backgroundColor: '#F9FAFB',
+                    textAlign: 'center',
+                    fontWeight: '600',
+                    color: '#111'
+                  }}
+                  placeholder="0.00"
+                  placeholderTextColor="#9CA3AF"
+                  value={additionalPaymentAmount}
+                  onChangeText={(text) => {
+                    // Allow only numbers and one decimal point
+                    const cleaned = text.replace(/[^0-9.]/g, '');
+                    // Ensure only one decimal point
+                    const parts = cleaned.split('.');
+                    if (parts.length > 2) {
+                      setAdditionalPaymentAmount(parts[0] + '.' + parts.slice(1).join(''));
+                    } else {
+                      setAdditionalPaymentAmount(cleaned);
+                    }
+                  }}
+                  keyboardType="decimal-pad"
+                  autoFocus={true}
+                />
+                {additionalPaymentAmount && parseFloat(additionalPaymentAmount) < balanceDue && (
+                  <Text style={{fontSize: 12, color: '#EF4444', marginTop: 6}}>
+                    Minimum payment: ₽{balanceDue.toFixed(2)}
+                  </Text>
+                )}
+              </View>
+              
+              <View style={{flexDirection: 'row', justifyContent: 'space-between', width: '100%'}}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#E5E7EB',
+                    paddingVertical: 14,
+                    paddingHorizontal: 20,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginRight: 12,
+                  }}
+                  onPress={() => {
+                    setIsAdditionalPaymentModalVisible(false);
+                    setAdditionalPaymentAmount('');
+                    setBalanceDue(0);
+                  }}
+                  disabled={isSaving}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: isSaving || !additionalPaymentAmount || parseFloat(additionalPaymentAmount) < balanceDue ? '#9CA3AF' : '#7C3AED',
+                    paddingVertical: 14,
+                    paddingHorizontal: 20,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    shadowColor: (isSaving || !additionalPaymentAmount || parseFloat(additionalPaymentAmount) < balanceDue) ? 'transparent' : '#7C3AED',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.2,
+                    shadowRadius: 4,
+                    elevation: 3,
+                  }}
+                  onPress={() => {
+                    const amount = parseFloat(additionalPaymentAmount);
+                    if (!amount || amount < balanceDue) {
+                      showCustomAlert('Invalid Amount', `Please enter at least ₽${balanceDue.toFixed(2)}`, 'warning');
+                      return;
+                    }
+                    updateTransaction(amount);
+                  }}
+                  disabled={isSaving || !additionalPaymentAmount || parseFloat(additionalPaymentAmount) < balanceDue}
+                  activeOpacity={0.8}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={{color: '#fff', fontWeight: '600', fontSize: 16}}>Add Payment</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+        </>
       );
     };
-    // PATCH: Add date range filter state
-    const [startDate, setStartDate] = useState(null);
-    const [endDate, setEndDate] = useState(null);
-    const [showStartPicker, setShowStartPicker] = useState(false);
-    const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Filter transactions by date range
     const filteredTransactions = previousTransactions.filter(tx => {
       if (!startDate && !endDate) return true;
       const txDate = new Date(tx.date);
@@ -1253,126 +2444,28 @@ export default function Scanner2(props) {
       return true;
     });
 
-    // Styles for modal
     const modalStyles = StyleSheet.create({
-      overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(55,53,62,0.55)',
-        justifyContent: 'center',
-        alignItems: 'center',
-      },
-      container: {
-        backgroundColor: '#fff',
-        borderRadius: 18,
-        paddingVertical: 32,
-        paddingHorizontal: 20,
-        width: '88%',
-        maxHeight: '75%',
-        shadowColor: '#37353E',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.18,
-        shadowRadius: 16,
-        elevation: 12,
-        alignItems: 'center',
-      },
-      title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#37353E',
-        marginBottom: 18,
-        textAlign: 'center',
-        letterSpacing: 0.5,
-      },
-      filterRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 18,
-        width: '100%',
-      },
-      filterButton: {
-        flex: 1,
-        marginHorizontal: 6,
-        paddingVertical: 10,
-        backgroundColor: '#F3F0FF',
-        borderRadius: 8,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-      },
-      filterText: {
-        fontSize: 15,
-        color: '#37353E',
-        fontWeight: '500',
-      },
-      scrollView: {
-        maxHeight: 320,
-        width: '100%',
-        marginBottom: 8,
-      },
-      transactionRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 14,
-        paddingBottom: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F0FF',
-      },
-      transactionDate: {
-        fontSize: 16,
-        color: '#37353E',
-        fontWeight: '500',
-      },
-      transactionAmount: {
-        fontSize: 17,
-        color: '#7C3AED',
-        fontWeight: 'bold',
-      },
-      emptyText: {
-        textAlign: 'center',
-        color: '#888',
-        fontSize: 16,
-        marginVertical: 24,
-      },
-      errorText: {
-        color: '#B00020',
-        textAlign: 'center',
-        fontSize: 16,
-        marginVertical: 18,
-      },
-      closeButton: {
-        marginTop: 22,
-        alignSelf: 'center',
-        backgroundColor: '#7C3AED',
-        borderRadius: 10,
-        paddingVertical: 12,
-        paddingHorizontal: 36,
-        shadowColor: '#7C3AED',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.18,
-        shadowRadius: 4,
-        elevation: 4,
-      },
-      closeButtonText: {
-        color: '#fff',
-        fontWeight: 'bold',
-        fontSize: 18,
-        letterSpacing: 0.5,
-      },
+      overlay: { flex: 1, backgroundColor: 'rgba(55,53,62,0.55)', justifyContent: 'center', alignItems: 'center' },
+      container: { backgroundColor: '#fff', borderRadius: 18, paddingVertical: 32, paddingHorizontal: 20, width: '88%', maxHeight: '75%', shadowColor: '#37353E', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 16, elevation: 12, alignItems: 'center' },
+      title: { fontSize: 28, fontWeight: 'bold', color: '#37353E', marginBottom: 18, textAlign: 'center', letterSpacing: 0.5 },
+      filterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, width: '100%' },
+      filterButton: { flex: 1, marginHorizontal: 6, paddingVertical: 10, backgroundColor: '#F3F0FF', borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#E5E7EB' },
+      filterText: { fontSize: 17, color: '#37353E', fontWeight: '500' },
+      scrollView: { maxHeight: 320, width: '100%', marginBottom: 8 },
+      transactionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#F3F0FF' },
+      transactionDate: { fontSize: 18, color: '#37353E', fontWeight: '500' },
+      transactionAmount: { fontSize: 20, color: '#7C3AED', fontWeight: 'bold' },
+      emptyText: { textAlign: 'center', color: '#888', fontSize: 18, marginVertical: 24 },
+      errorText: { color: '#B00020', textAlign: 'center', fontSize: 18, marginVertical: 18 },
+      closeButton: { marginTop: 22, alignSelf: 'center', backgroundColor: '#7C3AED', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 36, shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4, elevation: 4 },
+      closeButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 20, letterSpacing: 0.5 },
     });
 
     return (
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={isVisible}
-        onRequestClose={onClose}
-      >
+      <Modal animationType="fade" transparent={true} visible={isVisible} onRequestClose={onClose}>
         <View style={modalStyles.overlay}>
           <View style={modalStyles.container}>
             <Text style={modalStyles.title}>Previous Transactions</Text>
-            {/* Date Range Picker UI */}
             <View style={modalStyles.filterRow}>
               <TouchableOpacity onPress={() => setShowStartPicker(true)} style={modalStyles.filterButton}>
                 <Text style={modalStyles.filterText}>Start Date: {startDate ? startDate.toLocaleDateString() : 'Select'}</Text>
@@ -1382,28 +2475,11 @@ export default function Scanner2(props) {
               </TouchableOpacity>
             </View>
             {showStartPicker && (
-              <DateTimePicker
-                value={startDate || new Date()}
-                mode="date"
-                display="default"
-                onChange={(event, date) => {
-                  setShowStartPicker(false);
-                  if (date) setStartDate(date);
-                }}
-              />
+              <DateTimePicker value={startDate || new Date()} mode="date" display="default" onChange={(event, date) => { setShowStartPicker(false); if (date) setStartDate(date); }} />
             )}
             {showEndPicker && (
-              <DateTimePicker
-                value={endDate || new Date()}
-                mode="date"
-                display="default"
-                onChange={(event, date) => {
-                  setShowEndPicker(false);
-                  if (date) setEndDate(date);
-                }}
-              />
+              <DateTimePicker value={endDate || new Date()} mode="date" display="default" onChange={(event, date) => { setShowEndPicker(false); if (date) setEndDate(date); }} />
             )}
-            {/* Transaction List */}
             {isLoading ? (
               <ActivityIndicator size="large" color="#7C3AED" style={{ marginVertical: 32 }} />
             ) : error ? (
@@ -1414,17 +2490,14 @@ export default function Scanner2(props) {
               <ScrollView style={modalStyles.scrollView}>
                 {filteredTransactions.map(tx => (
                   <TouchableOpacity key={tx.id} style={modalStyles.transactionRow} activeOpacity={0.7} onPress={() => setSelectedTx(tx)}>
-                    <Text style={modalStyles.transactionDate}>Date: {tx.date}</Text>
+                    <Text style={modalStyles.transactionDate}>Date: {tx.date ? formatTime(tx.date) : 'N/A'}</Text>
                     <Text style={modalStyles.transactionAmount}>₽{tx.total ? Number(tx.total).toFixed(2) : '0.00'}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
             {renderDetailsModal()}
-            <TouchableOpacity
-              style={modalStyles.closeButton}
-              onPress={onClose}
-            >
+            <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
               <Text style={modalStyles.closeButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -1432,7 +2505,6 @@ export default function Scanner2(props) {
       </Modal>
     );
   }
-  // END PATCH
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1440,14 +2512,13 @@ export default function Scanner2(props) {
       <View style={[styles.wrapper, isLandscape && styles.landscapeWrapper]}>
         {/* Left Panel - Scanner */}
         <View 
-          ref={walkthroughTargets.scanner}
           style={[styles.leftPanel, isLandscape && styles.landscapeLeftPanel]}
         >
           <View style={styles.scanHereContainer}>
             <Text style={styles.scanHereText}>SCAN HERE</Text>
           </View>
 
-          <View style={styles.scannerBox}>
+          <View style={styles.scannerBox} ref={walkthroughTargets.scanner}>
             <CameraComponent
               isActive={isCameraActive}
               onBarcodeScanned={handleBarcodeScanned}
@@ -1475,48 +2546,47 @@ export default function Scanner2(props) {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.bottomContentContainer}>
-            <View style={{ alignItems: 'center', width: '100%' }}>
-              <View style={{ flexDirection: 'row', width: '100%', alignItems: 'flex-start', justifyContent: 'flex-start' }}>
-                <View style={styles.settingsContainer}>
-                  <TouchableOpacity
-                    style={styles.settingsButton}
-                    onPress={handleSettingsPress}
-                    accessibilityLabel="Settings"
-                    activeOpacity={0.7}
-                  >
-                    <Animated.View style={{
-                      transform: [{
-                        rotate: settingsRotateAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ['0deg', '360deg'],
-                        })
-                      }],
-                    }}>
-                      <Ionicons name="settings-outline" size={28} color="#344054" />
-                    </Animated.View>
-                    {showSettingsLabel && (
-                      <Animated.Text style={styles.settingsButtonText}>
-                        Settings
-                      </Animated.Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                <View style={[styles.transactionsContainer, { marginLeft: 150 }]}> 
-                  <TouchableOpacity
-                    style={styles.transactionsButton}
-                    onPress={() => setIsTransactionsModalVisible(true)}
-                    accessibilityLabel="Previous Transactions"
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="list-outline" size={28} color="#7C3AED" />
-                  </TouchableOpacity>
-                </View>
+          <View style={styles.buttonsContainer}>
+            <View style={styles.settingsContainer}>
+              <TouchableOpacity
+                style={styles.settingsButton}
+                onPress={handleSettingsPress}
+                accessibilityLabel="Settings"
+                activeOpacity={0.7}
+              >
+                <Animated.View style={{
+                  transform: [{
+                    rotate: settingsRotateAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '360deg'],
+                    })
+                  }],
+                }}>
+                  <Ionicons name="settings-outline" size={28} color="#344054" />
+                </Animated.View>
+                {showSettingsLabel && (
+                  <Animated.Text style={styles.settingsButtonText}>
+                    Settings
+                  </Animated.Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            <View style={styles.transactionsContainer} pointerEvents="box-none"> 
+              <TouchableOpacity
+                style={styles.transactionsButton}
+                onPress={() => setIsTransactionsModalVisible(true)}
+                accessibilityLabel="Previous Transactions"
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="list-outline" size={28} color="#7C3AED" />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-              </View>
-              <View style={styles.logoContainer}>
-                <Image source={require('../assets/logo3.png')} style={styles.logo} />
-              </View>
+          <View style={styles.bottomContentContainer}>
+            <View style={styles.logoContainer}>
+              <Image source={require('../assets/logo3.png')} style={styles.logo} />
             </View>
           </View>
         </View>
@@ -1525,8 +2595,8 @@ export default function Scanner2(props) {
         <View 
           style={[styles.middlePanel, isLandscape && styles.landscapeMiddlePanel]}
         >
+          <View ref={walkthroughTargets.cart} style={{ flex: 1 }}>
           <ScrollView 
-            ref={walkthroughTargets.cart}
             style={styles.itemsListContainer}
             contentContainerStyle={scannedItems.length === 0 ? styles.emptyCartScrollView : {}}
           >
@@ -1568,10 +2638,11 @@ export default function Scanner2(props) {
                 </View>
               )}
           </ScrollView>
+          </View>
 
           {/* Totals and Payment Section */}
           <View>
-            <View ref={walkthroughTargets.payment}>
+            <View>
               <View style={styles.section}>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Total Items:</Text>
@@ -1600,57 +2671,59 @@ export default function Scanner2(props) {
                   />
                 </View>
                 <View style={[styles.totalRow, styles.grandTotal]}>
-                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
+                  <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total:</Text>
                   <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total.toFixed(2)}</Text>
                 </View>
               </View>
 
-              <View style={styles.section}>
-                <Text style={styles.cashLabel}>Cash Tendered</Text>
-                <Animated.View style={[{ transform: [{ translateX: cashShake }] }]}>
-                  <TextInput
-                    style={styles.cashInput}
-                    placeholder="Enter cash amount"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="numeric"
-                    value={cashTendered}
-                    onChangeText={(text) => {
-                      const cleanedText = text.replace(/[^0-9.]/g, '');
-                      if (cleanedText.split('.').length > 2) {
-                        return;
-                      }
-                      setCashTendered(cleanedText);
-                      if (cashError) setCashError('');
-                    }}
-                    ref={cashInputRef}
-                  />
-                </Animated.View>
-                {!!cashError && (
-                  <Text style={{ color: '#B00020', fontSize: 12, marginTop: 4, textAlign: 'right' }}>{cashError}</Text>
-                )}
-                {cashTendered !== '' && (
-                  <Text style={[
-                    styles.changeText,
-                    change < 0 && { color: '#B00020' }
-                  ]}>
-                    Change: ₽{Math.abs(change).toFixed(2)}
-                    {change < 0 && ' (Insufficient)'}
-                  </Text>
-                )}
-              </View>
+              <View ref={walkthroughTargets.payment}>
+                <View style={styles.section}>
+                  <Text style={styles.cashLabel}>Cash Tendered</Text>
+                  <Animated.View style={[{ transform: [{ translateX: cashShake }] }]}>
+                    <TextInput
+                      style={styles.cashInput}
+                      placeholder="Enter cash amount"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="numeric"
+                      value={cashTendered}
+                      onChangeText={(text) => {
+                        const cleanedText = text.replace(/[^0-9.]/g, '');
+                        if (cleanedText.split('.').length > 2) {
+                          return;
+                        }
+                        setCashTendered(cleanedText);
+                        if (cashError) setCashError('');
+                      }}
+                      ref={cashInputRef}
+                    />
+                  </Animated.View>
+                  {!!cashError && (
+                    <Text style={{ color: '#B00020', fontSize: 12, marginTop: 4, textAlign: 'right' }}>{cashError}</Text>
+                  )}
+                  {cashTendered !== '' && (
+                    <Text style={[
+                      styles.changeText,
+                      change < 0 && { color: '#B00020' }
+                    ]}>
+                      Change: ₽{Math.abs(change).toFixed(2)}
+                      {change < 0 && ' (Insufficient)'}
+                    </Text>
+                  )}
+                </View>
 
-              <View style={styles.actionButtons}>
-                <TouchableOpacity
-                  style={[
-                    styles.finishButton,
-                    (isLoading || scannedItems.length === 0) && { backgroundColor: '#A0AEC0', shadowColor: 'transparent' }
-                  ]}
-                  onPress={handleCompletePurchase}
-                  disabled={isLoading || scannedItems.length === 0}
-                >
-                  <Ionicons name="checkmark-done" size={22} color="#fff" />
-                  <Text style={styles.finishButtonText}>Complete Transaction</Text>
-                </TouchableOpacity>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity
+                    style={[
+                      styles.finishButton,
+                      (isLoading || scannedItems.length === 0) && { backgroundColor: '#A0AEC0', shadowColor: 'transparent' }
+                    ]}
+                    onPress={handleCompletePurchase}
+                    disabled={isLoading || scannedItems.length === 0}
+                  >
+                    <Ionicons name="checkmark-done" size={22} color="#fff" />
+                    <Text style={styles.finishButtonText}>Complete Transaction</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </View>
@@ -1658,11 +2731,10 @@ export default function Scanner2(props) {
 
         {/* Right Panel - Search, Results, and Add Item */}
         <View 
-          ref={walkthroughTargets.search}
           style={[styles.rightPanel, isLandscape && styles.landscapeRightPanel]}
         >
           <View style={styles.searchAndControlsContainer}>
-            <View style={styles.searchContainer}>
+            <View style={styles.searchContainer} ref={walkthroughTargets.search}>
               <Ionicons name="search" size={18} color="#9CA3AF" style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
@@ -1734,7 +2806,13 @@ export default function Scanner2(props) {
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[styles.productItem, selectedProduct?.id === item.id && {backgroundColor: '#E5E7EB', borderColor: '#D1D5DB', borderWidth: 1}]}
-                  onPress={() => setSelectedProduct(item)}
+                  onPress={() => {
+                    if (item.stock <= 0) {
+                      showCustomAlert('Out of Stock', `${item.name} is currently out of stock and cannot be selected.`, 'warning');
+                    } else {
+                      setSelectedProduct(item);
+                    }
+                  }}
                 >
                   <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
                   <Text style={styles.productStockList}>Stock: {item.stock}</Text>
@@ -1760,7 +2838,7 @@ export default function Scanner2(props) {
                 if (selectedProduct) {
                   addScannedItem(selectedProduct, selectedProduct.id, 'manual');
                 } else {
-                  Alert.alert('No Product Selected', 'Please scan or select a product first');
+                  showCustomAlert('No Product Selected', 'Please scan or select a product first', 'info');
                 }
               }}
               disabled={!selectedProduct || selectedProduct?.stock === 0}
@@ -1772,7 +2850,7 @@ export default function Scanner2(props) {
         </View>
       </View>
 
-      {modal}
+      {renderLoadingModal()}
       {/* Inline toast-like notifier */}
       <Animated.View
         pointerEvents="none"
@@ -1800,17 +2878,21 @@ export default function Scanner2(props) {
         }}>{notifyMsg}</Text>
       </Animated.View>
       </View>
-      {renderSettingsModal()}
+      {renderCustomAlert()}
       {renderReceiptModal()}
-      {renderWalkthroughModal()}
-      {renderLogoutConfirmationModal()}
       {renderConfirmationModal()}
+      {renderSettingsModal()}
+      {renderLogoutConfirmationModal()}
+      {renderWalkthroughModal()}
       <RenderTransactionsModal
         isVisible={isTransactionsModalVisible}
         onClose={() => setIsTransactionsModalVisible(false)}
         previousTransactions={previousTransactions}
         isLoading={isTransactionsLoading}
         error={transactionsError}
+        filteredProducts={filteredProducts}
+        userId={userId}
+        onTransactionUpdated={fetchPreviousTransactions}
       />
     </SafeAreaView>
   );
@@ -1941,6 +3023,13 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
     backgroundColor: '#f7f7f9',
     borderRadius: 8,
     padding: 6,
+  },
+  buttonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    width: '100%',
   },
   cameraToggle: {
     flexDirection: 'row',
@@ -2237,7 +3326,7 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
   grandTotal: {
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
-    paddingTop: 10,
+    paddingTop: 12,
     marginTop: 8,
   },
   totalLabel: {
@@ -2276,7 +3365,6 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 12,
   },
   logo: {
     width: 180,
@@ -2284,132 +3372,7 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
     resizeMode: 'contain',
     opacity: 0.8,
   },
-  settingsContainer: {
-    alignItems: 'center',
-    marginBottom: 0,
-    marginRight: 12,
-  },
-  settingsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  settingsButtonText: {
-    color: '#344054',
-    fontWeight: '600',
-    marginLeft: 6,
-    fontSize: 12,
-  },
-  transactionsContainer: {
-    alignItems: 'center',
-    marginBottom: 0,
-    marginRight: 0,
-    marginLeft: 8,
-  },
-  transactionsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
-    marginLeft: 8,
-  },
-  transactionsButtonText: {
-    color: '#7C3AED',
-    fontWeight: '600',
-    marginLeft: 6,
-    fontSize: 13,
-  },
-  settingsModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  settingsModalContainer: {
-    width: '90%',
-    maxWidth: 320,
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
-    elevation: 10,
-  },
-  settingsModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  settingsModalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  settingsModalCloseButton: {
-    padding: 5,
-  },
-  settingsModalButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-    marginBottom: 8,
-    marginLeft: 8,
-    position: 'relative',
-       overflow: 'visible',
-  },
-  settingsButtonText: {
-    marginLeft: 8,
-    color: '#344054',
-    fontSize: 15,
-    fontWeight: '500',
-    backgroundColor: 'white',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    position: 'absolute',
-    left: 40,
-    top: 4,
-    opacity: 1,
-  },
-  settingsModalButtonSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  settingsLogoutButton: {
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'flex-start',
-  },
+
   // Logout Confirmation Modal
   logoutModalOverlay: {
     flex: 1,
@@ -2450,23 +3413,151 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
   },
   logoutModalButton: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   cancelLogoutButton: {
-    backgroundColor: '#F3F4F6',
-    marginRight: 8,
+    backgroundColor: '#E5E7EB',
+    marginRight: 12,
   },
   confirmLogoutButton: {
     backgroundColor: '#D94848',
-    marginLeft: 8,
+    shadowColor: '#D94848',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   logoutModalButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#7C3AED',
+    borderWidth: 3,
+    borderRadius: 16,
+    borderStyle: 'solid',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 15,
+    minWidth: 280,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+    zIndex: 1,
+  },
+  walkthroughIconContainer: {
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  walkthroughProgressContainer: {
+    width: '100%',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  walkthroughProgressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  walkthroughProgressFill: {
+    height: '100%',
+    backgroundColor: '#7C3AED',
+    borderRadius: 3,
+  },
+  walkthroughProgressText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  walkthroughTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1A202C',
+    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  walkthroughDescription: {
+    fontSize: 15,
+    color: '#4B5563',
+    marginBottom: 20,
+    lineHeight: 22,
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  walkthroughSkipButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#7C3AED',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 100,
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   // Receipt Modal Styles
   receiptModalOverlay: {
@@ -2577,7 +3668,7 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
     marginTop: 10,
   },
   receiptCloseButton: {
-    backgroundColor: '#1A202C',
+    backgroundColor: '#000',
     borderRadius: 8,
     paddingVertical: 15,
     marginTop: 20,
@@ -2588,79 +3679,1024 @@ const getStyles = (isLandscape, width, height) => StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  // Walkthrough Styles
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#E5E7EB',
+    marginRight: 12,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    shadowColor: '#D94848',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
   walkthroughOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   walkthroughHighlight: {
     position: 'absolute',
-    backgroundColor: 'rgba(197, 186, 255, 0.2)', // Soft highlight color
-    borderColor: '#A78BFA', // A nice purple
-    borderWidth: 2,
-    borderRadius: 12, // More rounded corners
-    shadowColor: '#A78BFA',
-    shadowOpacity: 0.8,
-    shadowRadius: 15,
+    backgroundColor: 'transparent',
+    borderColor: '#7C3AED',
+    borderWidth: 3,
+    borderRadius: 16,
+    borderStyle: 'solid',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 0 },
-    elevation: 10,
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 15,
   },
   walkthroughContainer: {
     position: 'absolute',
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
+    borderRadius: 20,
+    padding: 24,
     shadowColor: '#000',
-       shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
     elevation: 15,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    minWidth: 280,
   },
   walkthroughArrow: {
     position: 'absolute',
     width: 0,
     height: 0,
-    borderLeftWidth: 12,
-    borderRightWidth: 12,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+    zIndex: 1,
+  },
+  walkthroughIconContainer: {
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  walkthroughProgressContainer: {
+    width: '100%',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  walkthroughProgressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  walkthroughProgressFill: {
+    height: '100%',
+    backgroundColor: '#7C3AED',
+    borderRadius: 3,
+  },
+  walkthroughProgressText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   walkthroughTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 8,
+    color: '#1A202C',
+    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: 0.3,
   },
   walkthroughDescription: {
     fontSize: 15,
     color: '#4B5563',
-    lineHeight: 22,
     marginBottom: 20,
+    lineHeight: 22,
+    textAlign: 'center',
+    paddingHorizontal: 4,
   },
   walkthroughActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 8,
+  },
+  walkthroughSkipButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   walkthroughSkipText: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#6B7280',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   walkthroughNextButton: {
-    backgroundColor: '#6D28D9', // A deep purple
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    backgroundColor: '#7C3AED',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 100,
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   walkthroughNextButtonText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#E5E7EB',
+    marginRight: 12,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    shadowColor: '#D94848',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#7C3AED',
+    borderWidth: 3,
+    borderRadius: 16,
+    borderStyle: 'solid',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 15,
+    minWidth: 280,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+    zIndex: 1,
+  },
+  walkthroughIconContainer: {
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  walkthroughProgressContainer: {
+    width: '100%',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  walkthroughProgressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  walkthroughProgressFill: {
+    height: '100%',
+    backgroundColor: '#7C3AED',
+    borderRadius: 3,
+  },
+  walkthroughProgressText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  walkthroughTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1A202C',
+    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  walkthroughDescription: {
+    fontSize: 15,
+    color: '#4B5563',
+    marginBottom: 20,
+    lineHeight: 22,
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  walkthroughSkipButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#7C3AED',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 100,
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  // Receipt Modal Styles
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  receiptModalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  receiptHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+    marginBottom: 15,
+  },
+  receiptTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+  },
+  receiptDate: {
+    fontSize: 14,
+    color: '#888',
+    marginTop: 4,
+  },
+  receiptSection: {
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 15,
+  },
+  receiptSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#555',
+    marginBottom: 10,
+  },
+  receiptItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  receiptItemQty: {
+    fontSize: 15,
+    color: '#888',
+    marginRight: 10,
+  },
+  receiptItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+  },
+  receiptItemTotal: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+    marginLeft: 10,
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptTotalLabel: {
+    fontSize: 16,
+    color: '#666',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  receiptGrandTotal: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  receiptGrandTotalLabel: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptGrandTotalValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  receiptFooter: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#888',
+    marginTop: 10,
+  },
+  receiptCloseButton: {
+    backgroundColor: '#000',
+    borderRadius: 8,
+    paddingVertical: 15,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  receiptCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // Logout Confirmation Modal
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutModalContainer: {
+    width: '90%',
+    maxWidth: 340,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  logoutModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  logoutModalText: {
+    fontSize: 16,
+    color: '#4B5563',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  logoutModalActions: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-between',
+  },
+  logoutModalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelLogoutButton: {
+    backgroundColor: '#E5E7EB',
+    marginRight: 12,
+  },
+  confirmLogoutButton: {
+    backgroundColor: '#D94848',
+    shadowColor: '#D94848',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  logoutModalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  // Walkthrough Modal Styles
+  walkthroughOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  walkthroughHighlight: {
+    position: 'absolute',
+    backgroundColor: 'transparent',
+    borderColor: '#7C3AED',
+    borderWidth: 3,
+    borderRadius: 16,
+    borderStyle: 'solid',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  walkthroughContainer: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 15,
+    minWidth: 280,
+  },
+  walkthroughArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderColor: 'transparent',
+    borderStyle: 'solid',
+    zIndex: 1,
+  },
+  walkthroughIconContainer: {
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  walkthroughProgressContainer: {
+    width: '100%',
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  walkthroughProgressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  walkthroughProgressFill: {
+    height: '100%',
+    backgroundColor: '#7C3AED',
+    borderRadius: 3,
+  },
+  walkthroughProgressText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  walkthroughTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1A202C',
+    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  walkthroughDescription: {
+    fontSize: 15,
+    color: '#4B5563',
+    marginBottom: 20,
+    lineHeight: 22,
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  walkthroughActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  walkthroughSkipButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  walkthroughSkipText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  walkthroughNextButton: {
+    backgroundColor: '#7C3AED',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 100,
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  walkthroughNextButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  settingsContainer: {
+    alignItems: 'center',
+    marginBottom: 0,
+    marginRight: 0,
+  },
+  settingsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  settingsButtonText: {
+    color: '#344054',
+    fontWeight: '600',
+    marginLeft: 6,
+    fontSize: 12,
+  },
+  transactionsContainer: {
+    alignItems: 'center',
+    marginBottom: 0,
+    marginRight: 0,
+    marginLeft: 'auto',
+  },
+  transactionsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+    zIndex: 10,
+  },
+  transactionsButtonText: {
+    color: '#7C3AED',
+    fontWeight: '600',
+    marginLeft: 6,
+    fontSize: 13,
+  },
+  settingsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsModalContainer: {
+    width: '90%',
+    maxWidth: 320,
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  settingsModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  settingsModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  settingsModalCloseButton: {
+    padding: 5,
+  },
+  settingsModalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 8,
+    marginLeft: 8,
+    position: 'relative',
+    overflow: 'visible',
+  },
+  settingsModalButtonTextBox: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  settingsModalButtonSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  settingsLogoutButton: {
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'flex-start',
+  },
+  // Loading Modal Styles
+  loadingModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 32,
+    width: '85%',
+    maxWidth: 320,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  loadingSpinnerContainer: {
+    marginBottom: 24,
+    width: 64,
+    height: 64,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1A202C',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  loadingModalSubtitle: {
+    fontSize: 14,
+    color: '#667085',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  loadingProgressBar: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  loadingProgressFill: {
+    height: '100%',
+    backgroundColor: '#7C3AED',
+    borderRadius: 2,
+  },
+  // Custom Alert Modal Styles
+  customAlertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customAlertContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 28,
+    width: '85%',
+    maxWidth: 340,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  customAlertIconContainer: {
+    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customAlertTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1A202C',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  customAlertMessage: {
+    fontSize: 16,
+    color: '#667085',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  customAlertButton: {
+    width: '100%',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  customAlertButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

@@ -83,7 +83,7 @@ describe('Scanner2 Screen', () => {
     fireEvent(cameraSwitch, 'valueChange', true);
 
     // Wait for the camera view to appear
-    const cameraView = await findByTestId('camera-view-2');
+    const cameraView = await findByTestId('camera-view');
     expect(cameraView).toBeTruthy();
   });
 });

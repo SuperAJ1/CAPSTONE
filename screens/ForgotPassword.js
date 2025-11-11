@@ -97,7 +97,6 @@ export default function ForgotPassword() {
     </SafeAreaView>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
@@ -158,3 +157,4 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 });
+
