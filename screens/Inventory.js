@@ -12,11 +12,15 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useResponsive, responsiveFontSize, responsivePadding, scaleSize } from '../utils/responsive';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 
 import { API_URL } from '../utils/config';
 
 export default function Inventory() {
   const { isTablet, isSmallScreen, width } = useResponsive();
+  const { language } = useLanguage();
+  const t = translations[language];
   const [inventory, setInventory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -32,12 +36,20 @@ export default function Inventory() {
           setInventory(data.data);
         } else {
           console.error('Backend error:', data.error, data.message);
-          Alert.alert('Error', data.message || 'Failed to load inventory');
+          Alert.alert(
+            t.error,
+            data.message || (language === 'en' ? 'Failed to load inventory' : 'Nabigo ang pag-load ng inventory')
+          );
         }
       })
       .catch((err) => {
         console.error('Fetch error:', err);
-        Alert.alert('Network Error', 'Failed to connect to server. Please check your connection.');
+        Alert.alert(
+          language === 'en' ? 'Network Error' : 'Error sa Network',
+          language === 'en'
+            ? 'Failed to connect to server. Please check your connection.'
+            : 'Nabigo ang koneksyon sa server. Pakisuri ang iyong koneksyon.'
+        );
       })
       .finally(() => {
         setLoading(false);
@@ -57,10 +69,18 @@ export default function Inventory() {
 
   const renderHeader = () => (
     <View style={styles.tableHeader}>
-      <Text style={[styles.headerCell, { flex: 3 }]}>Name</Text>
-      <Text style={[styles.headerCell, { flex: 2 }]}>Category</Text>
-      <Text style={[styles.headerCell, { flex: 1, textAlign: 'center' }]}>Stock</Text>
-      <Text style={[styles.headerCell, { flex: 1.5, textAlign: 'right' }]}>Price</Text>
+      <Text style={[styles.headerCell, { flex: 3 }]}>
+        {language === 'en' ? 'Name' : 'Pangalan'}
+      </Text>
+      <Text style={[styles.headerCell, { flex: 2 }]}>
+        {t.category}
+      </Text>
+      <Text style={[styles.headerCell, { flex: 1, textAlign: 'center' }]}>
+        {t.stock}
+      </Text>
+      <Text style={[styles.headerCell, { flex: 1.5, textAlign: 'right' }]}>
+        {t.price}
+      </Text>
     </View>
   );
 
@@ -74,7 +94,7 @@ export default function Inventory() {
         <Ionicons name="search" size={scaleSize(24)} color="#888" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search inventory..."
+          placeholder={language === 'en' ? 'Search inventory...' : 'Maghanap ng inventory...'}
           placeholderTextColor="#888"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -97,7 +117,9 @@ export default function Inventory() {
                 ]}
               >
                 <Text style={[styles.cell, styles.nameCell, { flex: 3 }]} numberOfLines={1}>{item.name}</Text>
-                <Text style={[styles.cell, { flex: 2 }]}>{item.category || 'N/A'}</Text>
+                <Text style={[styles.cell, { flex: 2 }]}>
+                  {item.category || (language === 'en' ? 'N/A' : 'N/A')}
+                </Text>
                 <Text style={[styles.cell, { flex: 1, textAlign: 'center' }, item.stock <= 10 && styles.lowStock, item.stock === 0 && styles.outOfStock]}>{item.stock}</Text>
                 <Text style={[styles.cell, { flex: 1.5, textAlign: 'right' }]}>₱{parseFloat(item.price).toFixed(2)}</Text>
               </View>

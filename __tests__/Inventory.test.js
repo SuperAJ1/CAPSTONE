@@ -2,9 +2,13 @@ import React from 'react';
 import { render, waitFor, fireEvent } from '@testing-library/react-native';
 import Inventory from '../screens/Inventory';
 import { API_URL } from '../utils/config';
+import { Alert } from 'react-native';
 
 // Mock the fetch function
 global.fetch = jest.fn();
+
+// Mock Alert
+jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 
 const mockInventoryData = [
   { id: 1, name: 'Product A', category: 'Category 1', stock: 100, price: '10.00' },
@@ -15,6 +19,7 @@ const mockInventoryData = [
 describe('Inventory Screen', () => {
   beforeEach(() => {
     fetch.mockClear();
+    jest.clearAllMocks();
   });
 
   it('shows a loading indicator initially', async () => {
@@ -30,41 +35,51 @@ describe('Inventory Screen', () => {
 
   it('fetches and displays inventory data successfully', async () => {
     fetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ status: 'success', data: mockInventoryData }),
+      ok: true,
+      json: async () => ({ status: 'success', data: mockInventoryData }),
     });
 
-    const { getByText } = render(<Inventory />);
+    const { getByText, queryByTestId } = render(<Inventory />);
+
+    // Wait for loading to finish and data to appear
+    await waitFor(() => {
+      expect(queryByTestId('loading-indicator')).toBeNull();
+    }, { timeout: 10000 });
 
     await waitFor(() => {
       expect(getByText('Product A')).toBeTruthy();
       expect(getByText('Product B')).toBeTruthy();
       expect(getByText('Another Item')).toBeTruthy();
-    });
-  });
+    }, { timeout: 10000 });
+  }, 15000);
 
   it('displays an error message if the fetch fails', async () => {
     fetch.mockRejectedValueOnce(new Error('Network Error'));
-    const { getByPlaceholderText } = render(<Inventory />);
+    const { getByPlaceholderText, queryByTestId } = render(<Inventory />);
 
-    // This test is a bit tricky as Alert is a native module.
-    // In a real app, you might have a custom alert component to test.
-    // For now, we assume the console error is a sufficient side effect.
-    // We can also check that the loading indicator disappears and no data is shown.
+    // Wait for loading to finish (error should stop loading)
     await waitFor(() => {
-      expect(getByPlaceholderText('Search inventory...')).toBeTruthy(); // A stable element
-    });
-  });
+      expect(queryByTestId('loading-indicator')).toBeNull();
+    }, { timeout: 10000 });
+
+    // Check that the search input is available (component rendered)
+    expect(getByPlaceholderText('Search inventory...')).toBeTruthy();
+    
+    // Verify Alert was called
+    expect(Alert.alert).toHaveBeenCalledWith('Network Error', 'Failed to connect to server. Please check your connection.');
+  }, 15000);
 
   it('filters the inventory based on search query', async () => {
     fetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ status: 'success', data: mockInventoryData }),
+      ok: true,
+      json: async () => ({ status: 'success', data: mockInventoryData }),
     });
 
     const { getByPlaceholderText, getByText, queryByText } = render(<Inventory />);
 
     await waitFor(() => {
       expect(getByText('Product A')).toBeTruthy();
-    });
+    }, { timeout: 10000 });
 
     const searchInput = getByPlaceholderText('Search inventory...');
     fireEvent.changeText(searchInput, 'Product B');
@@ -72,11 +87,12 @@ describe('Inventory Screen', () => {
     expect(getByText('Product B')).toBeTruthy();
     expect(queryByText('Product A')).toBeNull();
     expect(queryByText('Another Item')).toBeNull();
-  });
+  }, 15000);
 
   it('highlights low stock and out of stock items', async () => {
     fetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ status: 'success', data: mockInventoryData }),
+      ok: true,
+      json: async () => ({ status: 'success', data: mockInventoryData }),
     });
 
     const { getByText } = render(<Inventory />);
@@ -89,6 +105,6 @@ describe('Inventory Screen', () => {
       // A simple check is to see if the elements are rendered.
       expect(lowStockItem).toBeTruthy();
       expect(outOfStockItem).toBeTruthy();
-    });
-  });
+    }, { timeout: 10000 });
+  }, 15000);
 });

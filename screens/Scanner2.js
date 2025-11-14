@@ -25,6 +25,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Audio } from 'expo-av';
 import { useNavigation } from '@react-navigation/native';
 import { API_URL as API_BASE_URL } from '../utils/config';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 import base64 from 'base-64';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -34,12 +36,12 @@ LogBox.ignoreLogs([
   'useInsertionEffect must not schedule updates',
 ]);
 
-const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styles }) => {
+const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styles, language }) => {
   if (!isActive) {
     return (
       <View style={styles.cameraOffOverlay}>
         <Ionicons name="scan-outline" size={100} color="#999" />
-        <Text style={styles.cameraOffText}>Camera is OFF</Text>
+        <Text style={styles.cameraOffText}>{language === 'en' ? 'Camera is OFF' : 'Naka-OFF ang Camera'}</Text>
       </View>
     );
   }
@@ -59,6 +61,8 @@ const CameraComponent = ({ isActive, onBarcodeScanned, cameraType, scanned, styl
 
 export default function Scanner({ userId }) {
   const navigation = useNavigation();
+  const { language } = useLanguage();
+  const t = translations[language];
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const styles = getStyles(isLandscape, width, height);
@@ -85,11 +89,16 @@ export default function Scanner({ userId }) {
   const [isSearching, setIsSearching] = useState(false);
 
   // Transaction state
-  const [globalDiscount, setGlobalDiscount] = useState(0);
   const [cashTendered, setCashTendered] = useState('');
+  const [editableTotal, setEditableTotal] = useState('');
+  const [isTotalFocused, setIsTotalFocused] = useState(false);
+  const [focusedItemTotalId, setFocusedItemTotalId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const processedCartPayloads = useRef(new Set());
+  // Track QR code signatures and their associated product IDs in the cart
+  const qrCodeCartItems = useRef(new Map()); // Map<signature, Set<productId>>
   const [cashError, setCashError] = useState('');
+  const [totalError, setTotalError] = useState('');
   const cashInputRef = useRef(null);
   const cashShake = useRef(new Animated.Value(0)).current;
   const notifyAnim = useRef(new Animated.Value(0)).current; // 0 hidden, 1 visible
@@ -120,6 +129,8 @@ export default function Scanner({ userId }) {
   const [isReceiptVisible, setIsReceiptVisible] = useState(false);
   const [receiptDetails, setReceiptDetails] = useState(null);
   const [isConfirmationModalVisible, setIsConfirmationModalVisible] = useState(false);
+  const [isNegativeProfitModalVisible, setIsNegativeProfitModalVisible] = useState(false);
+  const [negativeProfitAmount, setNegativeProfitAmount] = useState(0);
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
   const [isLogoutModalVisible, setIsLogoutModalVisible] = useState(false);
   
@@ -142,29 +153,37 @@ export default function Scanner({ userId }) {
   
   const walkthroughSteps = [
     {
-      title: 'Search for Products',
-      description: 'Use the search bar to find products by name or code.',
+      titleEn: 'Search for Products',
+      titleTl: 'Maghanap ng Produkto',
+      descriptionEn: 'Use the search bar to find products by name or code.',
+      descriptionTl: 'Gamitin ang search bar para maghanap ng produkto ayon sa pangalan o code.',
       target: 'search',
       direction: 'right',
       icon: 'search-outline',
     },
     {
-      title: 'Scan QR/Barcodes',
-      description: 'Alternatively, turn on the camera to scan product codes directly.',
+      titleEn: 'Scan QR Code',
+      titleTl: 'I-scan ang QR Code',
+      descriptionEn: 'Alternatively, turn on the camera to scan product codes directly.',
+      descriptionTl: 'Kung hindi, buksan ang camera para direktang i-scan ang product codes.',
       target: 'scanner',
       direction: 'left',
       icon: 'scan-outline',
     },
     {
-      title: 'Manage Your Cart',
-      description: 'View scanned items, adjust quantities, and apply discounts here.',
+      titleEn: 'Manage Your Cart',
+      titleTl: 'Pamahalaan ang Iyong Cart',
+      descriptionEn: 'View scanned items, adjust quantities, and edit prices here.',
+      descriptionTl: 'Tingnan ang mga na-scan na items, baguhin ang dami, at i-edit ang mga presyo dito.',
       target: 'cart',
       direction: 'left',
       icon: 'cart-outline',
     },
     {
-      title: 'Finalize Transaction',
-      description: "Enter the cash amount and press 'Complete Transaction' to finalize your purchase.",
+      titleEn: 'Finalize Transaction',
+      titleTl: 'Tapusin ang Transaksyon',
+      descriptionEn: "Enter the cash amount and press 'Complete Transaction' to finalize your purchase.",
+      descriptionTl: "Ilagay ang halaga ng pera at pindutin ang 'Complete Transaction' para tapusin ang iyong purchase.",
       target: 'payment',
       direction: 'up',
       icon: 'card-outline',
@@ -190,6 +209,95 @@ export default function Scanner({ userId }) {
     ]).start();
   };
 
+  // Helper function to safely parse JSON from responses that might contain HTML
+  const parseJSONFromResponse = (responseText) => {
+    try {
+      // First, try to parse the entire response as JSON
+      return JSON.parse(responseText);
+    } catch (e) {
+      // If that fails, try to find JSON within the response (might have HTML before/after)
+      // Look for JSON object starting with {
+      let jsonStartIndex = responseText.indexOf('{');
+      if (jsonStartIndex === -1) {
+        // Try looking for JSON array starting with [
+        jsonStartIndex = responseText.indexOf('[');
+      }
+      
+      if (jsonStartIndex === -1) {
+        // Check if response looks like HTML
+        if (responseText.trim().toLowerCase().startsWith('<!doctype') || 
+            responseText.trim().toLowerCase().startsWith('<html')) {
+          throw new Error('Server returned an HTML error page instead of JSON. Please check the server configuration.');
+        }
+        throw new Error('No valid JSON found in server response.');
+      }
+      
+      // Extract JSON from the found position
+      const jsonString = responseText.substring(jsonStartIndex);
+      
+      // Try to find the end of the JSON (find matching closing brace/bracket)
+      let braceCount = 0;
+      let bracketCount = 0;
+      let inString = false;
+      let escapeNext = false;
+      let jsonEndIndex = -1;
+      
+      for (let i = 0; i < jsonString.length; i++) {
+        const char = jsonString[i];
+        
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+        
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+        
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        
+        if (inString) continue;
+        
+        if (char === '{') braceCount++;
+        if (char === '}') {
+          braceCount--;
+          if (braceCount === 0 && bracketCount === 0) {
+            jsonEndIndex = i + 1;
+            break;
+          }
+        }
+        if (char === '[') bracketCount++;
+        if (char === ']') {
+          bracketCount--;
+          if (braceCount === 0 && bracketCount === 0) {
+            jsonEndIndex = i + 1;
+            break;
+          }
+        }
+      }
+      
+      // If we found a valid end, use it; otherwise use the rest of the string
+      const finalJsonString = jsonEndIndex > 0 
+        ? jsonString.substring(0, jsonEndIndex)
+        : jsonString;
+      
+      try {
+        return JSON.parse(finalJsonString);
+      } catch (parseError) {
+        // If parsing still fails, provide a better error message
+        if (responseText.trim().toLowerCase().startsWith('<!doctype') || 
+            responseText.trim().toLowerCase().startsWith('<html')) {
+          throw new Error('Server returned an HTML error page. The server may be experiencing issues. Please try again later.');
+        }
+        throw new Error('Server returned invalid JSON format. Please contact support if this issue persists.');
+      }
+    }
+  };
+
   const fetchPreviousTransactions = useCallback(async () => {
     setIsTransactionsLoading(true);
     setTransactionsError("");
@@ -201,11 +309,11 @@ export default function Scanner({ userId }) {
       console.log('Raw transactions response:', responseText);
       let data;
       try {
-        data = JSON.parse(responseText);
+        data = parseJSONFromResponse(responseText);
       } catch (e) {
         console.error('JSON parse error:', e);
         setPreviousTransactions([]);
-        setTransactionsError('Server returned invalid JSON');
+        setTransactionsError(e.message || 'Server returned invalid JSON');
         return;
       }
       if (data.status === 'success' && Array.isArray(data.data)) {
@@ -457,10 +565,58 @@ export default function Scanner({ userId }) {
   // Calculate totals
   const totalQty = scannedItems.reduce((sum, item) => sum + item.qty, 0);
   const subtotal = scannedItems.reduce(
-    (sum, item) => sum + (parseFloat(item.product.price) * item.qty * (1 - (item.discount / 100))),
+    (sum, item) => {
+      // Use itemTotal if available, otherwise calculate from sellPrice * qty
+      if (item.itemTotal !== undefined) {
+        return sum + parseFloat(item.itemTotal);
+      }
+      const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price);
+      return sum + (sellPrice * item.qty);
+    },
     0
   );
-  const total = subtotal * (1 - (parseFloat(globalDiscount || 0) / 100));
+  // Use editable total if set, otherwise use calculated subtotal
+  const calculatedTotal = subtotal;
+  const total = editableTotal !== '' && !isNaN(parseFloat(editableTotal)) 
+    ? parseFloat(editableTotal) 
+    : calculatedTotal;
+  
+  // Calculate total cost (sum of all item costs)
+  const totalCost = scannedItems.reduce(
+    (sum, item) => {
+      const costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+      return sum + (costPrice * item.qty);
+    },
+    0
+  );
+
+  // Calculate total profit
+  // If editableTotal is set and valid, use it to calculate profit (total - cost)
+  // This properly accounts for additional charges when total > subtotal
+  let totalProfit;
+  if (editableTotal !== '' && !isNaN(parseFloat(editableTotal))) {
+    // When total is edited (can be higher than subtotal), profit = edited total - total cost
+    // This ensures profit includes additional charges when total > subtotal
+    totalProfit = parseFloat(editableTotal) - totalCost;
+  } else {
+    // Calculate profit from individual items based on their itemTotal or sellPrice
+    totalProfit = scannedItems.reduce(
+      (sum, item) => {
+        const costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+        // If itemTotal is set, calculate profit from total - (cost * qty), otherwise use sellPrice
+        if (item.itemTotal !== undefined) {
+          const itemTotal = parseFloat(item.itemTotal);
+          const totalCost = costPrice * item.qty;
+          const profit = itemTotal - totalCost;
+          return sum + profit;
+        }
+        const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price);
+        const profit = (sellPrice - costPrice) * item.qty;
+        return sum + profit;
+      },
+      0
+    );
+  }
   const numericCashTendered = parseFloat(cashTendered || '0');
   const change = numericCashTendered - total;
 
@@ -476,10 +632,20 @@ export default function Scanner({ userId }) {
       if (data.status === 'success') {
         setFilteredProducts(data.data);
       } else {
-        showCustomAlert('Error', data.message || 'Failed to fetch products', 'error');
+        showCustomAlert(
+          language === 'en' ? 'Error' : 'Error',
+          data.message || (language === 'en' ? 'Failed to fetch products' : 'Nabigo ang pagkuha ng mga produkto'),
+          'error'
+        );
       }
     } catch (error) {
-      showCustomAlert('Error', 'Failed to connect to server. Please check your network and backend.', 'error');
+      showCustomAlert(
+        language === 'en' ? 'Error' : 'Error',
+        language === 'en' 
+          ? 'Failed to connect to server. Please check your network and backend.'
+          : 'Nabigo ang koneksyon sa server. Pakisuri ang iyong network at backend.',
+        'error'
+      );
       console.error('Fetch products error:', error);
     } finally {
       setIsSearching(false);
@@ -489,7 +655,13 @@ export default function Scanner({ userId }) {
   // Cart management functions
   const addScannedItem = useCallback((product, matchId, source = 'manual', quantityOverride) => {
     if (product.stock <= 0) {
-      showCustomAlert('Out of Stock', `${product.name} is currently out of stock.`, 'warning');
+      showCustomAlert(
+        language === 'en' ? 'Out of Stock' : 'Walang Stock',
+        language === 'en' 
+          ? `${product.name} is currently out of stock.`
+          : `Ang ${product.name} ay kasalukuyang walang stock.`,
+        'warning'
+      );
       return;
     }
 
@@ -520,8 +692,10 @@ export default function Scanner({ userId }) {
 
         if (newQuantity > product.stock) {
           showCustomAlert(
-            'Stock Limit Exceeded',
-            `Cannot add ${quantityToAdd} more to cart. Only ${product.stock - existingItem.qty} of ${product.name} left in stock.`,
+            language === 'en' ? 'Stock Limit Exceeded' : 'Lumampas sa Limit ng Stock',
+            language === 'en'
+              ? `Cannot add ${quantityToAdd} more to cart. Only ${product.stock - existingItem.qty} of ${product.name} left in stock.`
+              : `Hindi maaaring magdagdag ng ${quantityToAdd} pa sa cart. ${product.stock - existingItem.qty} na lang ng ${product.name} ang natitira sa stock.`,
             'warning'
           );
           return prevItems; // Don't update if stock is exceeded
@@ -536,8 +710,10 @@ export default function Scanner({ userId }) {
         // New item, add to cart
         if (quantityToAdd > product.stock) {
           showCustomAlert(
-            'Stock Limit Exceeded',
-            `Cannot add ${quantityToAdd} of ${product.name}. Only ${product.stock} left in stock.`,
+            language === 'en' ? 'Stock Limit Exceeded' : 'Lumampas sa Limit ng Stock',
+            language === 'en'
+              ? `Cannot add ${quantityToAdd} of ${product.name}. Only ${product.stock} left in stock.`
+              : `Hindi maaaring magdagdag ng ${quantityToAdd} ng ${product.name}. ${product.stock} na lang ang natitira sa stock.`,
             'warning'
           );
           return prevItems; // Don't add if stock is exceeded
@@ -551,7 +727,7 @@ export default function Scanner({ userId }) {
             cartMatchId: matchId 
           },
           qty: quantityToAdd,
-          discount: 0
+          sellPrice: product.price // Default to original price, user can edit
         }];
       }
 
@@ -570,28 +746,62 @@ export default function Scanner({ userId }) {
       const index = prevItems.findIndex(item => item.id === id);
       if (index === -1) return prevItems;
       const target = prevItems[index];
+      const productId = target.product.id;
+      
+      let newItems;
       if (target.qty && target.qty > 1) {
-        return prevItems.map(item => item.id === id ? { ...item, qty: item.qty - 1 } : item);
+        newItems = prevItems.map(item => item.id === id ? { ...item, qty: item.qty - 1 } : item);
+      } else {
+        newItems = prevItems.filter(item => item.id !== id);
       }
-      return prevItems.filter(item => item.id !== id);
+      
+      // Check if any QR codes have all their items removed
+      // Iterate through all QR code signatures
+      for (const [sig, productIds] of qrCodeCartItems.current.entries()) {
+        if (productIds.has(productId)) {
+          // Check if this product ID is still in the cart
+          const stillInCart = newItems.some(item => item.product.id === productId);
+          if (!stillInCart) {
+            // Remove this product ID from the QR code's tracked items
+            productIds.delete(productId);
+            
+            // If all items from this QR code are removed, remove the QR code from tracking
+            if (productIds.size === 0) {
+              qrCodeCartItems.current.delete(sig);
+              processedCartPayloads.current.delete(sig);
+            }
+          }
+        }
+      }
+      
+      return newItems;
     });
   }, []);
 
-  const updateItemDiscount = useCallback((id, discountText) => {
-    const cleanedText = discountText.replace(/[^0-9.]/g, ''); // Allow only numbers and one decimal
-    const discount = parseFloat(cleanedText) || 0;
+  const updateItemTotal = useCallback((id, totalText) => {
+    const cleanedText = totalText.replace(/[^0-9.]/g, ''); // Allow only numbers and one decimal
+    const total = parseFloat(cleanedText);
 
-    if (discount >= 0 && discount <= 100) { // Validate discount percentage
+    if (!isNaN(total) && total >= 0) {
       setScannedItems(prevItems =>
-        prevItems.map(item =>
-          item.id === id ? { ...item, discount } : item
-        )
+        prevItems.map(item => {
+          if (item.id === id) {
+            const qty = item.qty || 1;
+            const sellPrice = total / qty; // Calculate sell price from total
+            return { ...item, sellPrice, itemTotal: total };
+          }
+          return item;
+        })
       );
-    } else if (cleanedText === '') { // Allow clearing the input
+    } else if (cleanedText === '') {
+      // Reset to original price if cleared
       setScannedItems(prevItems =>
-        prevItems.map(item =>
-          item.id === id ? { ...item, discount: 0 } : item
-        )
+        prevItems.map(item => {
+          if (item.id === id) {
+            return { ...item, sellPrice: item.product.price, itemTotal: undefined };
+          }
+          return item;
+        })
       );
     }
   }, []);
@@ -599,8 +809,14 @@ export default function Scanner({ userId }) {
   const clearCart = useCallback(() => {
     setScannedItems([]);
     setSelectedProduct(null);
-    setGlobalDiscount(0);
     setCashTendered('');
+    setEditableTotal('');
+    setIsTotalFocused(false);
+    setFocusedItemTotalId(null);
+    setTotalError('');
+    // Clear all QR code tracking when cart is cleared
+    qrCodeCartItems.current.clear();
+    processedCartPayloads.current.clear();
   }, []);
 
   // Barcode scanner handler
@@ -612,6 +828,39 @@ export default function Scanner({ userId }) {
 
     try {
       setIsLoading(true);
+
+      // Helper to extract barcode/QR code from scanned data
+      const extractBarcode = (scannedData) => {
+        if (!scannedData || typeof scannedData !== 'string') {
+          return scannedData;
+        }
+
+        // Try to parse as JSON first (might be a JSON-encoded QR code)
+        try {
+          const parsed = JSON.parse(scannedData);
+          // If it's a product object, extract the ID or qr_code_data
+          if (parsed && typeof parsed === 'object') {
+            // Check if it has an id field (product object)
+            if (parsed.id) {
+              // Return the ID as the barcode to look up
+              return String(parsed.id);
+            }
+            // Check if it has qr_code_data field
+            if (parsed.qr_code_data) {
+              return String(parsed.qr_code_data);
+            }
+            // If it's a cart payload object, return null to handle separately
+            const keys = Object.keys(parsed);
+            if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+              return null; // This is a cart payload, handle separately
+            }
+          }
+        } catch (_) {
+          // Not JSON, continue with original data
+        }
+
+        return scannedData;
+      };
 
       // 0) Try cart payload: URL data=base64 or raw base64 JSON -> { productId: qty, ... }
       const tryParseCartPayload = (text) => {
@@ -639,7 +888,22 @@ export default function Scanner({ userId }) {
         } catch (_) { return null; }
       };
 
-      const cartMap = tryParseCartPayload(data);
+      // Try to parse as direct JSON first (for cart payloads)
+      let cartMap = null;
+      try {
+        const directJson = JSON.parse(data);
+        if (directJson && typeof directJson === 'object') {
+          // Check if it's a cart payload (object with numeric keys)
+          const keys = Object.keys(directJson);
+          if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+            cartMap = directJson;
+          }
+        }
+      } catch (_) {
+        // Not direct JSON, try cart payload parsing
+        cartMap = tryParseCartPayload(data);
+      }
+
       if (cartMap) {
         // Create a stable signature for duplicate detection
         const sig = (() => {
@@ -649,11 +913,32 @@ export default function Scanner({ userId }) {
             return JSON.stringify(entries);
           } catch (_) { return JSON.stringify(cartMap); }
         })();
-        if (processedCartPayloads.current.has(sig)) {
-          showCustomAlert('Already Scanned', 'This QR cart has already been added.', 'info');
-          return;
+        
+        // Check if items from this QR code are still in the cart
+        const itemsFromThisQR = qrCodeCartItems.current.get(sig);
+        if (itemsFromThisQR && itemsFromThisQR.size > 0) {
+          // Check if any of these product IDs are still in the cart
+          const stillInCart = scannedItems.some(item => {
+            const productId = item.product.id;
+            return itemsFromThisQR.has(productId);
+          });
+          
+          if (stillInCart) {
+            showCustomAlert(
+              language === 'en' ? 'Already in Cart' : 'Nasa Cart Na',
+              language === 'en'
+                ? 'Items from this QR code are still in the cart. Remove them first before scanning again.'
+                : 'Ang mga items mula sa QR code na ito ay nasa cart pa. Tanggalin muna ang mga ito bago mag-scan ulit.',
+              'warning'
+            );
+            return;
+          }
         }
-        processedCartPayloads.current.add(sig);
+        
+        // Track which product IDs will be added from this QR code
+        const productIdsToAdd = new Set();
+        const addedItems = [];
+        
         for (const [idKey, qtyVal] of Object.entries(cartMap)) {
           const qtyNum = parseInt(qtyVal, 10);
           if (!qtyNum || qtyNum < 1) continue;
@@ -661,15 +946,41 @@ export default function Scanner({ userId }) {
           const resp = await fetch(`${API_BASE_URL}/product_by_qr.php?qr_code=${encodeURIComponent(idKey)}`);
           const resJson = await resp.json();
           if (resJson.status === 'success' && resJson.data) {
-            addScannedItem(resJson.data, resJson.data.id, 'scan', qtyNum);
+            const productId = resJson.data.id;
+            productIdsToAdd.add(productId);
+            addedItems.push({ product: resJson.data, productId, qty: qtyNum });
+          }
+        }
+        
+        // Only mark as processed if we successfully added items
+        if (productIdsToAdd.size > 0) {
+          qrCodeCartItems.current.set(sig, productIdsToAdd);
+          processedCartPayloads.current.add(sig);
+          
+          // Add all items to cart
+          for (const { product, productId, qty } of addedItems) {
+            addScannedItem(product, productId, 'scan', qty);
           }
         }
         return;
       }
 
+      // Extract the actual barcode/QR code from the scanned data
+      const barcode = extractBarcode(data);
+      if (!barcode) {
+        showCustomAlert(
+          language === 'en' ? 'Invalid Scan' : 'Hindi Wasto ang Scan',
+          language === 'en'
+            ? 'Could not extract barcode from scanned data.'
+            : 'Hindi ma-extract ang barcode mula sa na-scan na data.',
+          'error'
+        );
+        return;
+      }
+
       // Always fetch from the backend to ensure the product is in the database
       const response = await fetch(
-        `${API_BASE_URL}/product_by_qr.php?qr_code=${encodeURIComponent(data)}`
+        `${API_BASE_URL}/product_by_qr.php?qr_code=${encodeURIComponent(barcode)}`
       );
       
       const responseText = await response.text();
@@ -677,27 +988,30 @@ export default function Scanner({ userId }) {
 
       let result;
       try {
-        // The backend might return HTML warnings before the JSON.
-        // Find the first '{' to locate the start of the JSON data.
-        const jsonStartIndex = responseText.indexOf('{');
-        if (jsonStartIndex === -1) {
-          throw new Error('No JSON object found in the server response.');
-        }
-        const jsonString = responseText.substring(jsonStartIndex);
-        result = JSON.parse(jsonString);
+        result = parseJSONFromResponse(responseText);
       } catch (e) {
-        throw new Error(`Server returned invalid JSON. Response: ${responseText.substring(0, 200)}...`);
+        throw new Error(e.message || 'Failed to parse server response.');
       }
 
       if (result.status === 'success' && result.data) {
         // Add item to cart
         addScannedItem(result.data, result.data.id, 'scan');
       } else {
-        showCustomAlert('Product Not Found', result.message || 'The scanned product is not in the database.', 'error');
+        showCustomAlert(
+          language === 'en' ? 'Product Not Found' : 'Hindi Nahanap ang Produkto',
+          result.message || (language === 'en' 
+            ? 'The scanned product is not in the database.'
+            : 'Ang na-scan na produkto ay wala sa database.'),
+          'error'
+        );
       }
     } catch (error) {
       console.error('Scan processing error:', error);
-      showCustomAlert('Error', 'Failed to verify product', 'error');
+      showCustomAlert(
+        language === 'en' ? 'Error' : 'Error',
+        language === 'en' ? 'Failed to verify product' : 'Nabigo ang pag-verify ng produkto',
+        'error'
+      );
     } finally {
       setIsLoading(false);
       setTimeout(() => setScanned(false), 1000);
@@ -705,49 +1019,207 @@ export default function Scanner({ userId }) {
   }, [scanned, addScannedItem]);
 
   // Purchase completion handler
-  const executePurchase = useCallback(async () => {
+  const executePurchase = useCallback(async (skipNegativeProfitCheck = false) => {
     if (scannedItems.length === 0) {
-      showCustomAlert('Empty Cart', 'Please add items to the cart before completing.', 'warning');
+      showCustomAlert(
+        language === 'en' ? 'Empty Cart' : 'Walang Laman ang Cart',
+        language === 'en'
+          ? 'Please add items to the cart before completing.'
+          : 'Mangyaring magdagdag ng items sa cart bago kumpletuhin.',
+        'warning'
+      );
       return;
     }
 
     if (cashTendered === '' || numericCashTendered <= 0) {
-      setCashError('Enter cash amount');
+      setCashError(language === 'en' ? 'Enter cash amount' : 'Ilagay ang halaga ng pera');
       triggerShake(cashShake);
       cashInputRef.current && cashInputRef.current.focus && cashInputRef.current.focus();
       Vibration.vibrate(80);
-      showNotify('Enter cash amount');
+      showNotify(language === 'en' ? 'Enter cash amount' : 'Ilagay ang halaga ng pera');
       return;
     }
 
-    if (numericCashTendered < total) {
-      showCustomAlert('Insufficient Cash', 'Cash tendered is less than the total amount.', 'error');
+    // Use editable total if set, otherwise use calculated total
+    const finalTotal = editableTotal !== '' && !isNaN(parseFloat(editableTotal)) 
+      ? parseFloat(editableTotal) 
+      : total;
+    
+    if (numericCashTendered < finalTotal) {
+      showCustomAlert(
+        language === 'en' ? 'Insufficient Cash' : 'Kulang ang Pera',
+        language === 'en'
+          ? 'Cash tendered is less than the total amount.'
+          : 'Ang perang ibinayad ay mas mababa kaysa sa kabuuang halaga.',
+        'error'
+      );
       return;
+    }
+
+    // Check for negative profit and show confirmation modal if needed
+    // Recalculate totalProfit here to ensure we have the latest value
+    if (!skipNegativeProfitCheck) {
+      // Calculate total cost
+      const currentTotalCost = scannedItems.reduce(
+        (sum, item) => {
+          const costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+          return sum + (costPrice * item.qty);
+        },
+        0
+      );
+
+      // Calculate current total profit
+      let currentTotalProfit;
+      if (editableTotal !== '' && !isNaN(parseFloat(editableTotal))) {
+        // When total is edited (can be higher than subtotal), profit = edited total - total cost
+        // This ensures profit includes additional charges when total > subtotal
+        currentTotalProfit = parseFloat(editableTotal) - currentTotalCost;
+      } else {
+        // Calculate profit from individual items
+        currentTotalProfit = scannedItems.reduce(
+          (sum, item) => {
+            const costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+            if (item.itemTotal !== undefined) {
+              const itemTotal = parseFloat(item.itemTotal);
+              const totalCost = costPrice * item.qty;
+              const profit = itemTotal - totalCost;
+              return sum + profit;
+            }
+            const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price);
+            const profit = (sellPrice - costPrice) * item.qty;
+            return sum + profit;
+          },
+          0
+        );
+      }
+
+      if (currentTotalProfit < 0) {
+        setNegativeProfitAmount(currentTotalProfit);
+        setIsNegativeProfitModalVisible(true);
+        return;
+      }
     }
 
     setIsLoading(true);
 
     try {
+      // Use editable total if set, otherwise use calculated total
+      const finalTotalForPayload = editableTotal !== '' && !isNaN(parseFloat(editableTotal)) 
+        ? parseFloat(editableTotal) 
+        : total;
+      
       const payload = {
         items: scannedItems.map(item => {
           if (!item.product || !item.product.id) {
             console.error('Error: Cart item missing valid product ID:', item);
             throw new Error('One or more cart items are missing a valid product ID. Cannot complete purchase.');
           }
+          // Calculate sellPrice - if itemTotal is set, use it to calculate sellPrice, otherwise use sellPrice directly
+          let sellPrice;
+          if (item.itemTotal !== undefined && !isNaN(parseFloat(item.itemTotal)) && parseFloat(item.itemTotal) > 0) {
+            // Calculate sellPrice from itemTotal
+            sellPrice = parseFloat(item.itemTotal) / (item.qty || 1);
+          } else {
+            // Use sellPrice directly
+            sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price);
+          }
+          
+          if (isNaN(sellPrice) || sellPrice <= 0 || !isFinite(sellPrice)) {
+            sellPrice = parseFloat(item.product.price);
+          }
+          // Ensure it's a valid positive number
+          sellPrice = Math.max(0, parseFloat(sellPrice.toFixed(2)));
+          
+          if (isNaN(sellPrice) || sellPrice <= 0 || !isFinite(sellPrice)) {
+            throw new Error(`Invalid sell price for item: ${item.product.name}`);
+          }
+          
+          // Ensure cost_price is valid and non-negative (can be 0)
+          let costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+          if (isNaN(costPrice) || costPrice < 0 || !isFinite(costPrice)) {
+            costPrice = 0;
+          }
+          // Ensure it's a valid non-negative number
+          costPrice = Math.max(0, parseFloat(costPrice.toFixed(2)));
+          
+          // Ensure quantity is valid and positive
+          let quantity = parseInt(item.qty, 10);
+          if (isNaN(quantity) || quantity <= 0 || !isFinite(quantity)) {
+            quantity = 1;
+          }
+          quantity = Math.max(1, parseInt(quantity, 10));
+          
           return {
-            product_id: item.product.id.toString(),
-            quantity: Number(item.qty),
-            price: Number(item.product.price),
-            discount: Number(item.discount) || 0
+            product_id: String(item.product.id),
+            quantity: quantity,
+            price: sellPrice,  // Backend expects 'price', not 'sell_price'
+            cost_price: costPrice
           };
         }),
-        global_discount: Number(globalDiscount) || 0,
-        cash_tendered: Number(cashTendered) || 0,
+        cash_tendered: (() => {
+          let cash = parseFloat(cashTendered) || 0;
+          if (isNaN(cash) || cash < 0 || !isFinite(cash)) {
+            cash = 0;
+          }
+          cash = Math.round((cash + Number.EPSILON) * 100) / 100;
+          cash = Number(cash.toFixed(2));
+          if (isNaN(cash) || cash < 0 || !isFinite(cash)) {
+            throw new Error('Invalid cash tendered amount');
+          }
+          return cash;
+        })(),
+        total_amount: (() => {
+          let total = parseFloat(finalTotalForPayload);
+          if (isNaN(total) || total < 0 || !isFinite(total)) {
+            throw new Error('Invalid total amount');
+          }
+          total = Math.round((total + Number.EPSILON) * 100) / 100;
+          total = Number(total.toFixed(2));
+          if (isNaN(total) || total < 0 || !isFinite(total)) {
+            throw new Error('Invalid total amount');
+          }
+          return total;
+        })(),
         user_id: userId || 1, // Default to 1 if userId is not available
-        // The backend calculates total and change, so we do not send them.
       };
 
-      console.log('Sending payload:', payload);
+      // Validate all items before sending
+      payload.items.forEach((item, index) => {
+        if (item.price <= 0 || isNaN(item.price) || !isFinite(item.price)) {
+          throw new Error(`Item ${index + 1} has invalid price: ${item.price} (must be > 0)`);
+        }
+        if (item.cost_price < 0 || isNaN(item.cost_price) || !isFinite(item.cost_price)) {
+          throw new Error(`Item ${index + 1} has invalid cost_price: ${item.cost_price} (must be >= 0)`);
+        }
+        if (item.quantity <= 0 || isNaN(item.quantity) || !isFinite(item.quantity)) {
+          throw new Error(`Item ${index + 1} has invalid quantity: ${item.quantity} (must be > 0)`);
+        }
+      });
+
+      // Calculate subtotal from items (backend will use this to validate)
+      const calculatedSubtotal = payload.items.reduce((sum, item) => {
+        return sum + (item.price * item.quantity);
+      }, 0);
+
+      // Total can now exceed subtotal (removed validation)
+
+      // Final validation and logging
+      console.log('Sending payload:', JSON.stringify(payload, null, 2));
+      console.log('Payload items validation:');
+      payload.items.forEach((item, index) => {
+        console.log(`Item ${index + 1}:`, {
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: item.price,
+          cost_price: item.cost_price,
+          price_type: typeof item.price,
+          cost_price_type: typeof item.cost_price,
+          quantity_type: typeof item.quantity,
+          price_isNaN: isNaN(item.price),
+          cost_price_isNaN: isNaN(item.cost_price),
+          quantity_isNaN: isNaN(item.quantity),
+        });
+      });
 
       const response = await fetch(`${API_BASE_URL}/complete_purchase.php`, {
         method: 'POST',
@@ -763,12 +1235,13 @@ export default function Scanner({ userId }) {
 
       let result;
       try {
-        result = JSON.parse(responseText);
+        result = parseJSONFromResponse(responseText);
       } catch (e) {
-        throw new Error(`Server returned invalid JSON. Response: ${responseText.substring(0, 200)}...`);
+        throw new Error(e.message || 'Failed to parse server response.');
       }
 
       if (!response.ok || result.status !== 'success') {
+        // Backend validation errors (excluding subtotal validation as it's now allowed)
         throw new Error(result.message || 'Purchase failed on server side.');
       }
 
@@ -777,37 +1250,55 @@ export default function Scanner({ userId }) {
       // Refresh the product list to update stock levels
       await fetchProducts(searchQuery);
       
+      // Use editable total if set, otherwise use calculated total
+      const finalTotal = editableTotal !== '' && !isNaN(parseFloat(editableTotal)) 
+        ? parseFloat(editableTotal) 
+        : total;
+      const finalChange = numericCashTendered - finalTotal;
+      
       setReceiptDetails({
         items: [...scannedItems],
-        total,
-        change,
+        total: finalTotal,
+        change: finalChange,
         cashTendered: numericCashTendered,
-        globalDiscount,
         subtotal,
+        totalProfit,
+        editableTotal,
+        calculatedTotal,
       });
       setIsReceiptVisible(true);
 
     } catch (error) {
       console.error('Full purchase error:', error);
       showCustomAlert(
-        'Purchase Failed',
+        language === 'en' ? 'Purchase Failed' : 'Nabigo ang Pagbili',
         error.message.includes('JSON')
-          ? "There was a problem with the server's response format. Please contact support."
-          : `Error: ${error.message}`,
+          ? (language === 'en'
+              ? "There was a problem with the server's response format. Please contact support."
+              : "May problema sa format ng response ng server. Pakikipag-ugnayan sa support.")
+          : (language === 'en'
+              ? `Error: ${error.message}`
+              : `Error: ${error.message}`),
         'error'
       );
     } finally {
       setIsLoading(false);
     }
-  }, [scannedItems, globalDiscount, cashTendered, total, clearCart, change, numericCashTendered, playBeep, fetchProducts, searchQuery]);
+  }, [scannedItems, cashTendered, total, clearCart, change, numericCashTendered, playBeep, fetchProducts, searchQuery]);
 
   const handleCompletePurchase = useCallback(() => {
     if (scannedItems.length === 0) {
-      showCustomAlert('Empty Cart', 'Please add items to the cart before completing.', 'warning');
+      showCustomAlert(
+        language === 'en' ? 'Empty Cart' : 'Walang Laman ang Cart',
+        language === 'en'
+          ? 'Please add items to the cart before completing.'
+          : 'Mangyaring magdagdag ng items sa cart bago kumpletuhin.',
+        'warning'
+      );
       return;
     }
     setIsConfirmationModalVisible(true);
-  }, [scannedItems]);
+  }, [scannedItems, language]);
 
   // Initialize camera permissions and fetch initial product list
   useEffect(() => {
@@ -832,7 +1323,9 @@ export default function Scanner({ userId }) {
     return (
       <View style={styles.permissionContainer}>
         <ActivityIndicator size="large" />
-        <Text style={styles.permissionText}>Requesting camera permission...</Text>
+        <Text style={styles.permissionText}>
+          {language === 'en' ? 'Requesting camera permission...' : 'Humihingi ng pahintulot sa camera...'}
+        </Text>
       </View>
     );
   }
@@ -841,10 +1334,14 @@ export default function Scanner({ userId }) {
     return (
       <View style={styles.permissionContainer}>
         <Text style={styles.permissionText}>
-          We need your permission to access the camera for scanning.
+          {language === 'en'
+            ? 'We need your permission to access the camera for scanning.'
+            : 'Kailangan namin ang iyong pahintulot upang ma-access ang camera para sa pag-scan.'}
         </Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Permission</Text>
+          <Text style={styles.buttonText}>
+            {language === 'en' ? 'Grant Permission' : 'Ibigay ang Pahintulot'}
+          </Text>
         </TouchableOpacity>
       </View>
     );
@@ -869,8 +1366,12 @@ export default function Scanner({ userId }) {
             <View style={styles.loadingSpinnerContainer}>
               <ActivityIndicator size="large" color="#7C3AED" />
         </View>
-            <Text style={styles.loadingModalTitle}>Processing Transaction</Text>
-            <Text style={styles.loadingModalSubtitle}>Please wait while we complete your purchase...</Text>
+            <Text style={styles.loadingModalTitle}>
+              {language === 'en' ? 'Processing Transaction' : 'Pinoproseso ang Transaksyon'}
+            </Text>
+            <Text style={styles.loadingModalSubtitle}>
+              {language === 'en' ? 'Please wait while we complete your purchase...' : 'Mangyaring maghintay habang kinukumpleto namin ang iyong pagbili...'}
+            </Text>
             <View style={styles.loadingProgressBar}>
               <Animated.View 
                 style={[
@@ -919,15 +1420,16 @@ export default function Scanner({ userId }) {
         transparent={true}
         visible={customAlert.visible}
         onRequestClose={() => {}}
+        presentationStyle="overFullScreen"
       >
         <TouchableOpacity
           activeOpacity={1}
-          style={styles.customAlertOverlay}
+          style={[styles.customAlertOverlay, { zIndex: 9999, elevation: 9999 }]}
           onPress={() => {}}
         >
           <TouchableOpacity
             activeOpacity={1}
-            style={styles.customAlertContainer}
+            style={[styles.customAlertContainer, { zIndex: 10000, elevation: 10000 }]}
             onPress={(e) => e.stopPropagation()}
           >
             <View style={styles.customAlertIconContainer}>
@@ -945,7 +1447,7 @@ export default function Scanner({ userId }) {
               }}
               activeOpacity={0.8}
             >
-              <Text style={styles.customAlertButtonText}>OK</Text>
+              <Text style={styles.customAlertButtonText}>{language === 'en' ? 'OK' : 'OK'}</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
@@ -959,26 +1461,7 @@ export default function Scanner({ userId }) {
     }
 
 
-    const { items, total, change, cashTendered, globalDiscount, subtotal } = receiptDetails;
-
-    // Calculate original subtotal (before any discounts)
-    const originalSubtotal = items.reduce(
-      (sum, item) => sum + (parseFloat(item.product.price) * item.qty),
-      0
-    );
-
-    // Calculate total item discounts
-    const totalItemDiscounts = items.reduce(
-      (sum, item) => {
-        const itemSubtotal = parseFloat(item.product.price) * item.qty;
-        const itemDiscountAmount = itemSubtotal * (item.discount / 100);
-        return sum + itemDiscountAmount;
-      },
-      0
-    );
-
-    // Calculate global discount amount
-    const globalDiscountAmount = subtotal * (parseFloat(globalDiscount || 0) / 100);
+    const { items, total, change, cashTendered, subtotal, totalProfit, editableTotal, calculatedTotal } = receiptDetails;
 
     return (
       <Modal
@@ -995,7 +1478,7 @@ export default function Scanner({ userId }) {
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.receiptHeader}>
                 <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
-                <Text style={styles.receiptTitle}>Purchase Complete</Text>
+                <Text style={styles.receiptTitle}>{t.transactionComplete}</Text>
                 <Text style={styles.receiptDate}>
                   {formatTime(new Date().toISOString())}
                 </Text>
@@ -1004,12 +1487,14 @@ export default function Scanner({ userId }) {
               <View style={styles.receiptSection}>
                 <Text style={styles.receiptSectionTitle}>Summary</Text>
                 {items.map(item => {
-                  const itemPrice = parseFloat(item.product.price);
+                  const originalPrice = parseFloat(item.product.price);
+                  const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : originalPrice;
                   const itemQty = item.qty;
-                  const itemDiscount = item.discount || 0;
-                  const itemSubtotal = itemPrice * itemQty;
-                  const itemDiscountAmount = itemSubtotal * (itemDiscount / 100);
-                  const itemTotal = itemSubtotal - itemDiscountAmount;
+                  const itemTotal = item.itemTotal !== undefined ? parseFloat(item.itemTotal) : (sellPrice * itemQty);
+                  
+                  // Calculate discount amount
+                  const originalTotal = originalPrice * itemQty;
+                  const discountAmount = originalTotal - itemTotal;
                   
                   return (
                     <View key={item.id} style={styles.receiptItem}>
@@ -1018,13 +1503,13 @@ export default function Scanner({ userId }) {
                           <Text style={styles.receiptItemQty}>{itemQty}x</Text>
                           <Text style={styles.receiptItemName} numberOfLines={1}>{item.product.name}</Text>
                         </View>
-                        {itemDiscount > 0 && (
-                          <Text style={{ fontSize: 12, color: '#888', marginLeft: 30, marginTop: 2 }}>
-                            Discount: {itemDiscount}% (-₽{itemDiscountAmount.toFixed(2)})
+                        {discountAmount > 0 && (
+                          <Text style={{ fontSize: 12, color: '#28a745', marginLeft: 30, marginTop: 2 }}>
+                            {t.discount}: -₱{discountAmount.toFixed(2)}
                           </Text>
                         )}
                       </View>
-                      <Text style={styles.receiptItemTotal}>₽{itemTotal.toFixed(2)}</Text>
+                      <Text style={styles.receiptItemTotal}>₱{itemTotal.toFixed(2)}</Text>
                     </View>
                   );
                 })}
@@ -1032,39 +1517,70 @@ export default function Scanner({ userId }) {
 
               <View style={styles.receiptSection}>
                 <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Subtotal</Text>
-                  <Text style={styles.receiptTotalValue}>₽{originalSubtotal.toFixed(2)}</Text>
+                  <Text style={styles.receiptTotalLabel}>{language === 'en' ? 'Subtotal' : 'Subtotal'}</Text>
+                  <Text style={styles.receiptTotalValue}>₱{subtotal.toFixed(2)}</Text>
                 </View>
-                {totalItemDiscounts > 0 && (
-                  <View style={styles.receiptTotalRow}>
-                    <Text style={styles.receiptTotalLabel}>Item Discounts</Text>
-                    <Text style={styles.receiptTotalValue}>-₽{totalItemDiscounts.toFixed(2)}</Text>
-                  </View>
-                )}
-                {globalDiscount > 0 && (
-                  <View style={styles.receiptTotalRow}>
-                    <Text style={styles.receiptTotalLabel}>Global Discount ({globalDiscount}%)</Text>
-                    <Text style={styles.receiptTotalValue}>-₽{globalDiscountAmount.toFixed(2)}</Text>
-                  </View>
-                )}
+                {(() => {
+                  // Calculate original subtotal (before any discounts)
+                  let originalSubtotal = 0;
+                  let totalItemDiscount = 0;
+                  
+                  items.forEach(item => {
+                    const originalPrice = parseFloat(item.product.price);
+                    const itemQty = item.qty;
+                    const itemSubtotal = originalPrice * itemQty;
+                    originalSubtotal += itemSubtotal;
+                    
+                    // Calculate item discount
+                    const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : originalPrice;
+                    const itemTotal = item.itemTotal !== undefined ? parseFloat(item.itemTotal) : (sellPrice * itemQty);
+                    const itemDiscountAmount = itemSubtotal - itemTotal;
+                    totalItemDiscount += itemDiscountAmount;
+                  });
+                  
+                  // Calculate global discount or edited total difference
+                  const calculatedSubtotalAfterItemDiscounts = originalSubtotal - totalItemDiscount;
+                  const globalDiscountOrEditAmount = calculatedSubtotalAfterItemDiscounts - total;
+                  
+                  return (
+                    <>
+                      {totalItemDiscount > 0 && (
+                        <View style={styles.receiptTotalRow}>
+                          <Text style={styles.receiptTotalLabel}>{t.itemDiscounts}</Text>
+                          <Text style={[styles.receiptTotalValue, { color: '#28a745' }]}>-₱{totalItemDiscount.toFixed(2)}</Text>
+                        </View>
+                      )}
+                      {globalDiscountOrEditAmount > 0 && (
+                        <View style={styles.receiptTotalRow}>
+                          <Text style={styles.receiptTotalLabel}>
+                            {editableTotal !== '' && !isNaN(parseFloat(editableTotal)) && parseFloat(editableTotal) !== calculatedTotal 
+                              ? t.totalAdjustment
+                              : t.globalDiscount}
+                          </Text>
+                          <Text style={[styles.receiptTotalValue, { color: '#28a745' }]}>-₱{globalDiscountOrEditAmount.toFixed(2)}</Text>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()}
                 <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
-                  <Text style={styles.receiptGrandTotalLabel}>Total</Text>
-                  <Text style={styles.receiptGrandTotalValue}>₽{total.toFixed(2)}</Text>
+                  <Text style={styles.receiptGrandTotalLabel}>{t.total}</Text>
+                  <Text style={styles.receiptGrandTotalValue}>₱{total.toFixed(2)}</Text>
                 </View>
               </View>
 
               <View style={styles.receiptSection}>
                 <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
-                  <Text style={styles.receiptTotalValue}>₽{cashTendered.toFixed(2)}</Text>
+                  <Text style={styles.receiptTotalLabel}>{language === 'en' ? 'Cash Tendered' : 'Perang Ibinayad'}</Text>
+                  <Text style={styles.receiptTotalValue}>₱{cashTendered.toFixed(2)}</Text>
                 </View>
                 <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>Change Due</Text>
-                  <Text style={styles.receiptTotalValue}>₽{change.toFixed(2)}</Text>
+                  <Text style={styles.receiptTotalLabel}>{language === 'en' ? 'Change Due' : 'Sukli'}</Text>
+                  <Text style={styles.receiptTotalValue}>₱{change.toFixed(2)}</Text>
                 </View>
               </View>
 
-              <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
+              <Text style={styles.receiptFooter}>{language === 'en' ? 'Thank you for your purchase!' : 'Salamat sa inyong pagbili!'}</Text>
             </ScrollView>
             <TouchableOpacity
               style={styles.receiptCloseButton}
@@ -1073,7 +1589,7 @@ export default function Scanner({ userId }) {
                 clearCart();
               }}
             >
-              <Text style={styles.receiptCloseButtonText}>New Transaction</Text>
+              <Text style={styles.receiptCloseButtonText}>{t.newTransaction}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1091,9 +1607,9 @@ export default function Scanner({ userId }) {
       <View style={styles.logoutModalOverlay}>
         <View style={styles.logoutModalContainer}>
           <Ionicons name="help-circle-outline" size={48} color="#3498db" />
-          <Text style={styles.logoutModalTitle}>Confirm Action</Text>
+          <Text style={styles.logoutModalTitle}>{language === 'en' ? 'Confirm Action' : 'Kumpirmahin ang Aksyon'}</Text>
           <Text style={styles.logoutModalText}>
-            Are you done adding products?
+            {language === 'en' ? 'Are you done adding products?' : 'Tapos ka na ba sa pagdaragdag ng mga produkto?'}
           </Text>
           <View style={styles.logoutModalActions}>
             <TouchableOpacity
@@ -1101,7 +1617,7 @@ export default function Scanner({ userId }) {
               onPress={() => setIsConfirmationModalVisible(false)}
               activeOpacity={0.8}
             >
-              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>{t.cancel}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.logoutModalButton, {
@@ -1114,11 +1630,59 @@ export default function Scanner({ userId }) {
               }]}
               onPress={() => {
                 setIsConfirmationModalVisible(false);
-                executePurchase();
+                executePurchase(); // Don't skip - let it check for negative profit
               }}
               activeOpacity={0.8}
             >
-              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>Yes, Proceed</Text>
+              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>{language === 'en' ? 'Yes, Proceed' : 'Oo, Magpatuloy'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderNegativeProfitModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={isNegativeProfitModalVisible}
+      onRequestClose={() => setIsNegativeProfitModalVisible(false)}
+    >
+      <View style={styles.logoutModalOverlay}>
+        <View style={styles.logoutModalContainer}>
+          <Ionicons name="warning" size={48} color="#F59E0B" />
+          <Text style={styles.logoutModalTitle}>{language === 'en' ? 'Negative Profit Warning' : 'Babala sa Negatibong Kita'}</Text>
+          <Text style={styles.logoutModalText}>
+            {language === 'en'
+              ? `This transaction will result in a loss of ₱${Math.abs(negativeProfitAmount).toFixed(2)}.`
+              : `Ang transaksyon na ito ay magreresulta sa pagkawala ng ₱${Math.abs(negativeProfitAmount).toFixed(2)}.`}
+          </Text>
+          <Text style={[styles.logoutModalText, { marginTop: 8, fontSize: 16, color: '#EF4444', fontWeight: '600' }]}>
+            {language === 'en' ? 'Total Profit' : 'Kabuuang Kita'}: ₱{negativeProfitAmount.toFixed(2)}
+          </Text>
+          <Text style={[styles.logoutModalText, { marginTop: 12, fontSize: 15, color: '#6B7280' }]}>
+            {language === 'en' ? 'Do you want to proceed with this transaction?' : 'Gusto mo bang magpatuloy sa transaksyon na ito?'}
+          </Text>
+          <View style={styles.logoutModalActions}>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, styles.cancelLogoutButton]}
+              onPress={() => {
+                setIsNegativeProfitModalVisible(false);
+                setNegativeProfitAmount(0);
+              }}
+            >
+              <Text style={[styles.logoutModalButtonText, { color: '#4B5563' }]}>{t.cancel}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logoutModalButton, {backgroundColor: '#F59E0B'}]}
+              onPress={() => {
+                setIsNegativeProfitModalVisible(false);
+                setNegativeProfitAmount(0);
+                executePurchase(true); // Skip the negative profit check and proceed
+              }}
+            >
+              <Text style={styles.logoutModalButtonText}>{language === 'en' ? 'Yes, Proceed' : 'Oo, Magpatuloy'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1140,7 +1704,7 @@ export default function Scanner({ userId }) {
       >
         <View style={styles.settingsModalContainer}>
           <View style={styles.settingsModalHeader}>
-            <Text style={styles.settingsModalTitle}>Settings</Text>
+            <Text style={styles.settingsModalTitle}>{language === 'en' ? 'Settings' : 'Mga Setting'}</Text>
             <TouchableOpacity
               style={styles.settingsModalCloseButton}
               onPress={() => setIsSettingsModalVisible(false)}
@@ -1155,8 +1719,12 @@ export default function Scanner({ userId }) {
           >
             <Ionicons name="book-outline" size={24} color="#344054" />
             <View style={styles.settingsModalButtonTextBox}>
-              <Text style={styles.settingsModalButtonText}>User Guide</Text>
-              <Text style={styles.settingsModalButtonSubtitle}>Learn how to use the app</Text>
+              <Text style={styles.settingsModalButtonText}>
+                {language === 'en' ? 'User Guide' : 'Gabay ng User'}
+              </Text>
+              <Text style={styles.settingsModalButtonSubtitle}>
+                {language === 'en' ? 'Learn how to use the app' : 'Matuto kung paano gamitin ang app'}
+              </Text>
             </View>
           </TouchableOpacity>
 
@@ -1169,8 +1737,12 @@ export default function Scanner({ userId }) {
           >
             <Ionicons name="log-out-outline" size={24} color="#B91C1C" />
             <View style={styles.settingsModalButtonTextBox}>
-              <Text style={[styles.settingsModalButtonText, { color: '#B91C1C' }]}>Logout</Text>
-              <Text style={[styles.settingsModalButtonSubtitle, { color: '#DC2626' }]}>End your session</Text>
+              <Text style={[styles.settingsModalButtonText, { color: '#B91C1C' }]}>
+                {language === 'en' ? 'Logout' : 'Mag-logout'}
+              </Text>
+              <Text style={[styles.settingsModalButtonSubtitle, { color: '#DC2626' }]}>
+                {language === 'en' ? 'End your session' : 'Tapusin ang iyong session'}
+              </Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -1188,9 +1760,11 @@ export default function Scanner({ userId }) {
       <View style={styles.logoutModalOverlay}>
         <View style={styles.logoutModalContainer}>
           <Ionicons name="log-out-outline" size={48} color="#D94848" />
-          <Text style={styles.logoutModalTitle}>Confirm Logout</Text>
+          <Text style={styles.logoutModalTitle}>
+            {language === 'en' ? 'Confirm Logout' : 'Kumpirmahin ang Logout'}
+          </Text>
           <Text style={styles.logoutModalText}>
-            Are you sure you want to end your session?
+            {language === 'en' ? 'Are you sure you want to end your session?' : 'Sigurado ka bang gusto mong tapusin ang iyong session?'}
           </Text>
           <View style={styles.logoutModalActions}>
             <TouchableOpacity
@@ -1198,14 +1772,16 @@ export default function Scanner({ userId }) {
               onPress={() => setIsLogoutModalVisible(false)}
               activeOpacity={0.8}
             >
-              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>Cancel</Text>
+              <Text style={{color: '#333', fontWeight: '600', fontSize: 18}}>{t.cancel}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.logoutModalButton, styles.confirmLogoutButton]}
               onPress={handleLogout}
               activeOpacity={0.8}
             >
-              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>Logout</Text>
+              <Text style={{color: '#fff', fontWeight: '600', fontSize: 18}}>
+                {language === 'en' ? 'Logout' : 'Mag-logout'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1235,7 +1811,8 @@ export default function Scanner({ userId }) {
     
     // Calculate dynamic height based on content
     const titleHeight = 60;
-    const descriptionHeight = currentStep.description.length > 60 ? 80 : 60;
+    const currentDescription = language === 'en' ? currentStep.descriptionEn : currentStep.descriptionTl;
+    const descriptionHeight = currentDescription && currentDescription.length > 60 ? 80 : 60;
     const actionsHeight = 50;
     const iconHeight = 50;
     const padding = 40;
@@ -1501,10 +2078,14 @@ export default function Scanner({ userId }) {
             </View>
             
             {/* Title */}
-            <Text style={styles.walkthroughTitle}>{currentStep.title}</Text>
+            <Text style={styles.walkthroughTitle}>
+              {language === 'en' ? currentStep.titleEn : currentStep.titleTl}
+            </Text>
             
             {/* Description */}
-            <Text style={styles.walkthroughDescription}>{currentStep.description}</Text>
+            <Text style={styles.walkthroughDescription}>
+              {language === 'en' ? currentStep.descriptionEn : currentStep.descriptionTl}
+            </Text>
             
             {/* Actions */}
             <View style={styles.walkthroughActions}>
@@ -1513,7 +2094,9 @@ export default function Scanner({ userId }) {
                 onPress={handleSkipWalkthrough}
                 activeOpacity={0.7}
               >
-                <Text style={styles.walkthroughSkipText}>Skip</Text>
+                <Text style={styles.walkthroughSkipText}>
+                  {language === 'en' ? 'Skip' : 'Laktawan'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.walkthroughNextButton} 
@@ -1521,7 +2104,9 @@ export default function Scanner({ userId }) {
                 activeOpacity={0.8}
               >
                 <Text style={styles.walkthroughNextButtonText}>
-                  {walkthroughStep === walkthroughSteps.length - 1 ? 'Finish' : 'Next'}
+                  {walkthroughStep === walkthroughSteps.length - 1
+                    ? (language === 'en' ? 'Finish' : 'Tapos')
+                    : (language === 'en' ? 'Next' : 'Susunod')}
                 </Text>
                 {walkthroughStep < walkthroughSteps.length - 1 && (
                   <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 6 }} />
@@ -1595,7 +2180,6 @@ export default function Scanner({ userId }) {
         const payload = {
           transaction_id: selectedTx.id,
           items: groupedItems,
-          global_discount: selectedTx.global_discount ?? selectedTx.globalDiscount ?? 0,
           cash_tendered: selectedTx.cash_tendered ?? selectedTx.cashTendered ?? 0,
           user_id: userId || 1,
         };
@@ -1613,11 +2197,9 @@ export default function Scanner({ userId }) {
         const responseText = await response.text();
         let result;
         try {
-          const jsonStartIndex = responseText.indexOf('{');
-          if (jsonStartIndex === -1) throw new Error('No JSON found.');
-          result = JSON.parse(responseText.substring(jsonStartIndex));
+          result = parseJSONFromResponse(responseText);
         } catch (e) {
-          throw new Error(`Invalid JSON: ${responseText.substring(0, 200)}...`);
+          throw new Error(e.message || 'Failed to parse server response.');
         }
         if (!response.ok || result.status !== 'success') {
           throw new Error(result.message || 'Update failed.');
@@ -1665,18 +2247,23 @@ export default function Scanner({ userId }) {
         // Success - transaction updated
         const changeDue = data.change_due || 0;
         const message = changeDue > 0 
-          ? `Transaction updated successfully.\n\nChange Due: ₽${changeDue.toFixed(2)}`
+          ? `Transaction updated successfully.\n\nChange Due: ₱${changeDue.toFixed(2)}`
           : 'Transaction updated successfully.';
         
-        showCustomAlert('Success', message, 'success', () => {
-            setIsEditModalVisible(false);
-            setIsAdditionalPaymentModalVisible(false);
+        // Close other modals first to ensure success alert appears on top
+        setIsEditModalVisible(false);
+        setIsAdditionalPaymentModalVisible(false);
+        
+        // Use setTimeout to ensure modals are closed before showing success alert
+        setTimeout(() => {
+          showCustomAlert('Success', message, 'success', () => {
             setSelectedTx(null);
             setEditedItems([]);
             setAdditionalPaymentAmount('');
             setBalanceDue(0);
             if (onTransactionUpdated) onTransactionUpdated();
-        });
+          });
+        }, 100);
       } catch (error) {
         // Check if error is about insufficient cash - show modal instead of alert
         const errorMessage = error.message || '';
@@ -1840,11 +2427,11 @@ export default function Scanner({ userId }) {
                           </View>
                           {itemDiscount > 0 && (
                             <Text style={{fontSize: 12, color: '#888', marginLeft: 30, marginTop: 2}}>
-                              Discount: {itemDiscount}% (-₽{itemDiscountAmount.toFixed(2)})
+                              Discount: {itemDiscount}% (-₱{itemDiscountAmount.toFixed(2)})
                             </Text>
                           )}
                         </View>
-                        <Text style={styles.receiptItemTotal}>₽{itemTotal.toFixed(2)}</Text>
+                        <Text style={styles.receiptItemTotal}>₱{itemTotal.toFixed(2)}</Text>
                       </View>
                     );
                   }) : <Text style={{color: '#888', fontSize: 15}}>No item details available.</Text>}
@@ -1852,7 +2439,7 @@ export default function Scanner({ userId }) {
                 <View style={styles.receiptSection}>
                   <View style={styles.receiptTotalRow}>
                     <Text style={styles.receiptTotalLabel}>Subtotal</Text>
-                    <Text style={styles.receiptTotalValue}>₽{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
+                    <Text style={styles.receiptTotalValue}>₱{subtotal !== undefined ? Number(subtotal).toFixed(2) : '-'}</Text>
                   </View>
                   {(() => {
                     let originalSubtotal = 0;
@@ -1874,13 +2461,13 @@ export default function Scanner({ userId }) {
                         {totalItemDiscount > 0 && (
                           <View style={styles.receiptTotalRow}>
                             <Text style={styles.receiptTotalLabel}>Item Discounts</Text>
-                            <Text style={styles.receiptTotalValue}>-₽{totalItemDiscount.toFixed(2)}</Text>
+                            <Text style={styles.receiptTotalValue}>-₱{totalItemDiscount.toFixed(2)}</Text>
                           </View>
                         )}
                         {globalDiscount > 0 && (
                           <View style={styles.receiptTotalRow}>
                             <Text style={styles.receiptTotalLabel}>Global Discount ({globalDiscount}%)</Text>
-                            <Text style={styles.receiptTotalValue}>-₽{globalDiscountAmount.toFixed(2)}</Text>
+                            <Text style={styles.receiptTotalValue}>-₱{globalDiscountAmount.toFixed(2)}</Text>
                           </View>
                         )}
                       </>
@@ -1888,17 +2475,17 @@ export default function Scanner({ userId }) {
                   })()}
                   <View style={[styles.receiptTotalRow, styles.receiptGrandTotal]}>
                     <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total</Text>
-                    <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
+                    <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₱{total !== undefined ? Number(total).toFixed(2) : '-'}</Text>
                   </View>
                 </View>
                 <View style={styles.receiptSection}>
                   <View style={styles.receiptTotalRow}>
                     <Text style={styles.receiptTotalLabel}>Cash Tendered</Text>
-                    <Text style={styles.receiptTotalValue}>₽{cashTendered !== undefined ? Number(cashTendered).toFixed(2) : '-'}</Text>
+                    <Text style={styles.receiptTotalValue}>₱{cashTendered !== undefined ? Number(cashTendered).toFixed(2) : '-'}</Text>
                   </View>
                   <View style={styles.receiptTotalRow}>
                     <Text style={styles.receiptTotalLabel}>Change Due</Text>
-                    <Text style={styles.receiptTotalValue}>₽{Number(selectedTx.change_due ?? 0).toFixed(2)}</Text>
+                    <Text style={styles.receiptTotalValue}>₱{Number(selectedTx.change_due ?? 0).toFixed(2)}</Text>
                   </View>
                 </View>
                 <Text style={styles.receiptFooter}>Thank you for your purchase!</Text>
@@ -2052,7 +2639,7 @@ export default function Scanner({ userId }) {
                                           
                                           <View style={{flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap'}}>
                                             <Text style={{fontSize: 14, color: isOutOfStock ? '#9CA3AF' : '#6B7280', fontWeight: '500', marginRight: 8}}>
-                                              ₽{parseFloat(item.price_each || item.price || 0).toFixed(2)}
+                                              ₱{parseFloat(item.price_each || item.price || 0).toFixed(2)}
                                             </Text>
                                             
                                             {/* Stock Badge */}
@@ -2330,7 +2917,7 @@ export default function Scanner({ userId }) {
                   The updated product price exceeds the previous cash tendered.
                 </Text>
                 <Text style={{fontSize: 18, color: '#7C3AED', fontWeight: 'bold', marginTop: 8}}>
-                  Balance Due: ₽{balanceDue.toFixed(2)}
+                  Balance Due: ₱{balanceDue.toFixed(2)}
                 </Text>
               </View>
               
@@ -2369,7 +2956,7 @@ export default function Scanner({ userId }) {
                 />
                 {additionalPaymentAmount && parseFloat(additionalPaymentAmount) < balanceDue && (
                   <Text style={{fontSize: 12, color: '#EF4444', marginTop: 6}}>
-                    Minimum payment: ₽{balanceDue.toFixed(2)}
+                    Minimum payment: ₱{balanceDue.toFixed(2)}
                   </Text>
                 )}
               </View>
@@ -2414,7 +3001,7 @@ export default function Scanner({ userId }) {
                   onPress={() => {
                     const amount = parseFloat(additionalPaymentAmount);
                     if (!amount || amount < balanceDue) {
-                      showCustomAlert('Invalid Amount', `Please enter at least ₽${balanceDue.toFixed(2)}`, 'warning');
+                      showCustomAlert('Invalid Amount', `Please enter at least ₱${balanceDue.toFixed(2)}`, 'warning');
                       return;
                     }
                     updateTransaction(amount);
@@ -2436,11 +3023,117 @@ export default function Scanner({ userId }) {
       );
     };
 
+    // Helper function to parse date string to Date object
+    const parseTransactionDate = (dateStr) => {
+      if (!dateStr) return null;
+      
+      // If already a Date object, return it
+      if (dateStr instanceof Date) {
+        return isNaN(dateStr.getTime()) ? null : dateStr;
+      }
+      
+      // If not a string, return null
+      if (typeof dateStr !== 'string') {
+        return null;
+      }
+      
+      // Try multiple date formats
+      // Format 1: MySQL datetime format "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD HH:MM"
+      const mysqlFormat = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (mysqlFormat) {
+        const [, year, month, day, hour = '0', minute = '0', second = '0'] = mysqlFormat;
+        const date = new Date(
+          parseInt(year, 10),
+          parseInt(month, 10) - 1, // Month is 0-indexed
+          parseInt(day, 10),
+          parseInt(hour, 10),
+          parseInt(minute, 10),
+          parseInt(second, 10)
+        );
+        if (!isNaN(date.getTime())) {
+          return date;
+        }
+      }
+      
+      // Format 2: ISO format "YYYY-MM-DDTHH:MM:SS" or with timezone
+      let date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+      
+      // Format 3: Try replacing space with T for ISO format
+      date = new Date(dateStr.replace(' ', 'T'));
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+      
+      // Format 4: Try with timezone offset
+      date = new Date(dateStr + 'Z');
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+      
+      return null;
+    };
+    
     const filteredTransactions = previousTransactions.filter(tx => {
+      // If no filters are set, show all transactions
       if (!startDate && !endDate) return true;
-      const txDate = new Date(tx.date);
-      if (startDate && txDate < startDate) return false;
-      if (endDate && txDate > endDate) return false;
+      
+      // Parse transaction date
+      const txDate = parseTransactionDate(tx.date);
+      if (!txDate) {
+        console.warn('Could not parse transaction date:', tx.date, 'Transaction ID:', tx.id);
+        return false; // Skip transactions with invalid dates
+      }
+      
+      // Get date components (year, month, day) for comparison
+      const txYear = txDate.getFullYear();
+      const txMonth = txDate.getMonth();
+      const txDay = txDate.getDate();
+      
+      // Compare with start date
+      if (startDate) {
+        const start = new Date(startDate);
+        // Reset time to beginning of day to ensure we include all transactions on that day
+        start.setHours(0, 0, 0, 0);
+        const startYear = start.getFullYear();
+        const startMonth = start.getMonth();
+        const startDay = start.getDate();
+        
+        // Transaction date must be >= start date
+        if (txYear < startYear) {
+          return false;
+        }
+        if (txYear === startYear && txMonth < startMonth) {
+          return false;
+        }
+        if (txYear === startYear && txMonth === startMonth && txDay < startDay) {
+          return false;
+        }
+      }
+      
+      // Compare with end date
+      if (endDate) {
+        const end = new Date(endDate);
+        // Reset time to end of day to ensure we include all transactions on that day
+        end.setHours(23, 59, 59, 999);
+        const endYear = end.getFullYear();
+        const endMonth = end.getMonth();
+        const endDay = end.getDate();
+        
+        // Transaction date must be <= end date
+        if (txYear > endYear) {
+          return false;
+        }
+        if (txYear === endYear && txMonth > endMonth) {
+          return false;
+        }
+        if (txYear === endYear && txMonth === endMonth && txDay > endDay) {
+          return false;
+        }
+      }
+      
       return true;
     });
 
@@ -2465,15 +3158,28 @@ export default function Scanner({ userId }) {
       <Modal animationType="fade" transparent={true} visible={isVisible} onRequestClose={onClose}>
         <View style={modalStyles.overlay}>
           <View style={modalStyles.container}>
-            <Text style={modalStyles.title}>Previous Transactions</Text>
+            <Text style={modalStyles.title}>{t.transactions}</Text>
             <View style={modalStyles.filterRow}>
               <TouchableOpacity onPress={() => setShowStartPicker(true)} style={modalStyles.filterButton}>
-                <Text style={modalStyles.filterText}>Start Date: {startDate ? startDate.toLocaleDateString() : 'Select'}</Text>
+                <Text style={modalStyles.filterText}>{language === 'en' ? 'Start Date' : 'Simula ng Petsa'}: {startDate ? startDate.toLocaleDateString() : (language === 'en' ? 'Select' : 'Pumili')}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowEndPicker(true)} style={modalStyles.filterButton}>
-                <Text style={modalStyles.filterText}>End Date: {endDate ? endDate.toLocaleDateString() : 'Select'}</Text>
+                <Text style={modalStyles.filterText}>{language === 'en' ? 'End Date' : 'Wakas ng Petsa'}: {endDate ? endDate.toLocaleDateString() : (language === 'en' ? 'Select' : 'Pumili')}</Text>
               </TouchableOpacity>
             </View>
+            {(startDate || endDate) && (
+              <TouchableOpacity 
+                onPress={() => {
+                  setStartDate(null);
+                  setEndDate(null);
+                }}
+                style={[modalStyles.filterButton, { marginTop: 8, backgroundColor: '#FF3B30' }]}
+              >
+                <Text style={[modalStyles.filterText, { color: '#fff' }]}>
+                  {language === 'en' ? 'Clear Filter' : 'Linisin ang Filter'}
+                </Text>
+              </TouchableOpacity>
+            )}
             {showStartPicker && (
               <DateTimePicker value={startDate || new Date()} mode="date" display="default" onChange={(event, date) => { setShowStartPicker(false); if (date) setStartDate(date); }} />
             )}
@@ -2485,20 +3191,35 @@ export default function Scanner({ userId }) {
             ) : error ? (
               <Text style={modalStyles.errorText}>{error}</Text>
             ) : filteredTransactions.length === 0 ? (
-              <Text style={modalStyles.emptyText}>No previous transactions found.</Text>
+              <View style={{ alignItems: 'center', padding: 20 }}>
+                <Text style={modalStyles.emptyText}>
+                  {(startDate || endDate)
+                    ? (language === 'en' 
+                        ? 'No transactions found for the selected date range.' 
+                        : 'Walang nahanap na transaksyon para sa napiling saklaw ng petsa.')
+                    : t.noTransactions}
+                </Text>
+                {(startDate || endDate) && (
+                  <Text style={[modalStyles.emptyText, { fontSize: 14, marginTop: 8, color: '#888' }]}>
+                    {language === 'en'
+                      ? `Start: ${startDate ? startDate.toLocaleDateString() : 'None'} | End: ${endDate ? endDate.toLocaleDateString() : 'None'}`
+                      : `Simula: ${startDate ? startDate.toLocaleDateString() : 'Wala'} | Wakas: ${endDate ? endDate.toLocaleDateString() : 'Wala'}`}
+                  </Text>
+                )}
+              </View>
             ) : (
               <ScrollView style={modalStyles.scrollView}>
                 {filteredTransactions.map(tx => (
                   <TouchableOpacity key={tx.id} style={modalStyles.transactionRow} activeOpacity={0.7} onPress={() => setSelectedTx(tx)}>
-                    <Text style={modalStyles.transactionDate}>Date: {tx.date ? formatTime(tx.date) : 'N/A'}</Text>
-                    <Text style={modalStyles.transactionAmount}>₽{tx.total ? Number(tx.total).toFixed(2) : '0.00'}</Text>
+                    <Text style={modalStyles.transactionDate}>{language === 'en' ? 'Date' : 'Petsa'}: {tx.date ? formatTime(tx.date) : 'N/A'}</Text>
+                    <Text style={modalStyles.transactionAmount}>₱{tx.total ? Number(tx.total).toFixed(2) : '0.00'}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
             {renderDetailsModal()}
             <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
-              <Text style={modalStyles.closeButtonText}>Close</Text>
+              <Text style={modalStyles.closeButtonText}>{t.close}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2515,7 +3236,7 @@ export default function Scanner({ userId }) {
           style={[styles.leftPanel, isLandscape && styles.landscapeLeftPanel]}
         >
           <View style={styles.scanHereContainer}>
-            <Text style={styles.scanHereText}>SCAN HERE</Text>
+            <Text style={styles.scanHereText}>{language === 'en' ? 'SCAN HERE' : 'MAG-SCAN DITO'}</Text>
           </View>
 
           <View style={styles.scannerBox} ref={walkthroughTargets.scanner}>
@@ -2525,12 +3246,13 @@ export default function Scanner({ userId }) {
               cameraType={cameraType}
               scanned={scanned}
               styles={styles}
+              language={language}
             />
           </View>
 
           <View style={styles.cameraControls}>
             <View style={styles.cameraToggle}>
-              <Text style={styles.cameraToggleText}>Camera</Text>
+              <Text style={styles.cameraToggleText}>{language === 'en' ? 'Camera' : 'Camera'}</Text>
               <Switch
                 value={isCameraActive}
                 onValueChange={setIsCameraActive}
@@ -2566,7 +3288,7 @@ export default function Scanner({ userId }) {
                 </Animated.View>
                 {showSettingsLabel && (
                   <Animated.Text style={styles.settingsButtonText}>
-                    Settings
+                    {language === 'en' ? 'Settings' : 'Mga Setting'}
                   </Animated.Text>
                 )}
               </TouchableOpacity>
@@ -2607,22 +3329,79 @@ export default function Scanner({ userId }) {
                       <Text style={styles.scannedItemName} numberOfLines={1}>{item.product.name}</Text>
                       <View style={styles.scannedItemDetails}>
                         <Text style={styles.scannedItemPrice}>
-                          Qty: {item.qty} | Price: ₽{parseFloat(item.product.price).toFixed(2)}
+                          {t.quantity}: {item.qty}
+                          {(() => {
+                            const originalPrice = parseFloat(item.product.price);
+                            const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : originalPrice;
+                            const itemTotal = item.itemTotal !== undefined ? parseFloat(item.itemTotal) : (sellPrice * item.qty);
+                            const originalTotal = originalPrice * item.qty;
+                            const discountAmount = originalTotal - itemTotal;
+                            return discountAmount > 0 ? ` | ${t.discount}: -₱${discountAmount.toFixed(2)}` : '';
+                          })()}
                         </Text>
                         <View style={styles.discountInputContainer}>
-                          <Text style={styles.discountLabel}>Discount:</Text>
+                          <Text style={styles.discountLabel}>{language === 'en' ? 'Item Total' : 'Kabuuang presyo'}:</Text>
                           <TextInput
                             style={styles.discountInput}
-                            value={String(item.discount)}
+                            value={focusedItemTotalId === item.id ? (item.itemTotal !== undefined ? String(item.itemTotal) : '') : String((item.itemTotal !== undefined ? item.itemTotal : (item.sellPrice !== undefined ? parseFloat(item.sellPrice) * item.qty : parseFloat(item.product.price) * item.qty)).toFixed(2))}
                             keyboardType="numeric"
-                            onChangeText={(text) => updateItemDiscount(item.id, text)}
-                            placeholder="0"
+                            onChangeText={(text) => updateItemTotal(item.id, text)}
+                            onFocus={() => {
+                              setFocusedItemTotalId(item.id);
+                              // Temporarily clear to allow fresh typing
+                              if (item.itemTotal !== undefined) {
+                                setScannedItems(prevItems =>
+                                  prevItems.map(prevItem =>
+                                    prevItem.id === item.id ? { ...prevItem, itemTotal: undefined } : prevItem
+                                  )
+                                );
+                              }
+                            }}
+                            onBlur={() => {
+                              setFocusedItemTotalId(null);
+                              // Restore to calculated total if empty or invalid
+                              setScannedItems(prevItems =>
+                                prevItems.map(prevItem => {
+                                  if (prevItem.id === item.id) {
+                                    const currentSellPrice = prevItem.sellPrice !== undefined ? parseFloat(prevItem.sellPrice) : parseFloat(prevItem.product.price);
+                                    const calculatedTotal = currentSellPrice * prevItem.qty;
+                                    if (prevItem.itemTotal === undefined || isNaN(parseFloat(prevItem.itemTotal)) || parseFloat(prevItem.itemTotal) < 0) {
+                                      return { ...prevItem, itemTotal: undefined, sellPrice: prevItem.product.price };
+                                    }
+                                  }
+                                  return prevItem;
+                                })
+                              );
+                            }}
+                            placeholder={String((parseFloat(item.product.price) * item.qty).toFixed(2))}
                           />
-                          <Text style={styles.discountPercent}>%</Text>
                         </View>
+                        {(() => {
+                          const sellPrice = item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price);
+                          const originalPrice = parseFloat(item.product.price);
+                          const costPrice = parseFloat(item.product.cost_price || item.product.costPrice || 0);
+                          const profit = (sellPrice - costPrice) * item.qty;
+                          const discountPercent = item.sellPrice !== undefined && item.sellPrice !== originalPrice
+                            ? ((originalPrice - sellPrice) / originalPrice) * 100
+                            : 0;
+                          return (
+                            <View>
+                              {discountPercent > 0 && (
+                                <Text style={{ fontSize: 12, color: '#F59E0B', marginTop: 4, fontWeight: '600' }}>
+                                  {t.discount}: {discountPercent.toFixed(2)}%
+                                </Text>
+                              )}
+                              <Text style={{ fontSize: 12, color: profit >= 0 ? '#4CAF50' : '#F44336', marginTop: 4 }}>
+                                {language === 'en' ? 'Profit' : 'Kita'}: ₱{profit.toFixed(2)}
+                              </Text>
+                            </View>
+                          );
+                        })()}
                       </View>
                     </View>
-                    <Text style={styles.scannedItemTotal}>₽{(item.product.price * item.qty * (1 - item.discount / 100)).toFixed(2)}</Text>
+                    <Text style={styles.scannedItemTotal}>
+                      ₱{(item.itemTotal !== undefined ? parseFloat(item.itemTotal) : ((item.sellPrice !== undefined ? parseFloat(item.sellPrice) : parseFloat(item.product.price)) * item.qty)).toFixed(2)}
+                    </Text>
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => removeItem(item.id)}
@@ -2650,39 +3429,76 @@ export default function Scanner({ userId }) {
                 </View>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Subtotal:</Text>
-                  <Text style={styles.totalValue}>₽{subtotal.toFixed(2)}</Text>
+                  <Text style={styles.totalValue}>₱{subtotal.toFixed(2)}</Text>
                 </View>
                 <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Global Discount:</Text>
-                  <TextInput
-                    style={styles.discountInput}
-                    value={String(globalDiscount)}
-                    keyboardType="numeric"
-                    onChangeText={(text) => {
-                      const cleanedText = text.replace(/[^0-9.]/g, '');
-                      const discount = parseFloat(cleanedText) || 0;
-                      if (discount >= 0 && discount <= 100) {
-                        setGlobalDiscount(discount);
-                      } else if (cleanedText === '') {
-                        setGlobalDiscount(0);
-                      }
-                    }}
-                    placeholder="0"
-                  />
+                  <Text style={styles.totalLabel}>Total Profit:</Text>
+                  <Text style={[styles.totalValue, { color: totalProfit >= 0 ? '#4CAF50' : '#F44336', fontWeight: '600' }]}>
+                    ₱{totalProfit.toFixed(2)}
+                  </Text>
                 </View>
                 <View style={[styles.totalRow, styles.grandTotal]}>
                   <Text style={[styles.totalLabel, {fontWeight: 'bold', fontSize: 16, color: '#1A202C'}]}>Total:</Text>
-                  <Text style={[styles.totalValue, {fontWeight: 'bold', fontSize: 18, color: '#1A202C'}]}>₽{total.toFixed(2)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 0 }}>
+                    <TextInput
+                      style={[styles.discountInput, { 
+                        fontWeight: 'bold', 
+                        fontSize: 18, 
+                        color: '#1A202C',
+                        textAlign: 'right',
+                        minWidth: 100,
+                        borderWidth: editableTotal !== '' && editableTotal !== String(calculatedTotal.toFixed(2)) ? 1 : 0,
+                        borderColor: '#4CAF50',
+                        borderRadius: 4,
+                        paddingHorizontal: 4
+                      }]}
+                      value={isTotalFocused ? editableTotal : (editableTotal !== '' ? editableTotal : String(total.toFixed(2)))}
+                      keyboardType="numeric"
+                      onChangeText={(text) => {
+                        // Always replace the value, never append
+                        const cleanedText = text.replace(/[^0-9.]/g, '');
+                        if (cleanedText.split('.').length > 2) {
+                          return;
+                        }
+                        setEditableTotal(cleanedText);
+                        
+                        // Clear error on input (total can now exceed subtotal)
+                        if (cleanedText === '' || isNaN(parseFloat(cleanedText))) {
+                          setTotalError('');
+                        } else {
+                          setTotalError('');
+                        }
+                      }}
+                      onFocus={() => {
+                        // Clear the field when user focuses so they can type fresh
+                        setIsTotalFocused(true);
+                        setEditableTotal('');
+                      }}
+                      onBlur={() => {
+                        setIsTotalFocused(false);
+                        const enteredValue = parseFloat(editableTotal);
+                        // Reset to calculated total if empty or invalid (total can now exceed subtotal)
+                        if (editableTotal === '' || isNaN(enteredValue) || enteredValue < 0) {
+                          setEditableTotal('');
+                          setTotalError('');
+                        }
+                      }}
+                      placeholder={String(calculatedTotal.toFixed(2))}
+                    />
+                  </View>
                 </View>
+                {totalError !== '' && (
+                  <Text style={{ color: '#B00020', fontSize: 12, marginTop: 4, textAlign: 'right' }}>{totalError}</Text>
+                )}
               </View>
 
               <View ref={walkthroughTargets.payment}>
                 <View style={styles.section}>
-                  <Text style={styles.cashLabel}>Cash Tendered</Text>
+                  <Text style={styles.cashLabel}>{language === 'en' ? 'Cash Tendered' : 'Perang Ibinayad'}</Text>
                   <Animated.View style={[{ transform: [{ translateX: cashShake }] }]}>
                     <TextInput
                       style={styles.cashInput}
-                      placeholder="Enter cash amount"
+                      placeholder={language === 'en' ? 'Enter cash amount' : 'Ilagay ang halaga ng pera'}
                       placeholderTextColor="#9CA3AF"
                       keyboardType="numeric"
                       value={cashTendered}
@@ -2705,8 +3521,8 @@ export default function Scanner({ userId }) {
                       styles.changeText,
                       change < 0 && { color: '#B00020' }
                     ]}>
-                      Change: ₽{Math.abs(change).toFixed(2)}
-                      {change < 0 && ' (Insufficient)'}
+                      {language === 'en' ? 'Change' : 'Sukli'}: ₱{Math.abs(change).toFixed(2)}
+                      {change < 0 && (language === 'en' ? ' (Insufficient)' : ' (Kulang)')}
                     </Text>
                   )}
                 </View>
@@ -2721,7 +3537,7 @@ export default function Scanner({ userId }) {
                     disabled={isLoading || scannedItems.length === 0}
                   >
                     <Ionicons name="checkmark-done" size={22} color="#fff" />
-                    <Text style={styles.finishButtonText}>Complete Transaction</Text>
+                    <Text style={styles.finishButtonText}>{t.checkout}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2738,7 +3554,7 @@ export default function Scanner({ userId }) {
               <Ionicons name="search" size={18} color="#9CA3AF" style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search Products..."
+                placeholder={language === 'en' ? 'Search Products...' : 'Maghanap ng Produkto...'}
                 placeholderTextColor="#9CA3AF"
                 value={searchQuery}
                 onChangeText={(text) => {
@@ -2759,18 +3575,18 @@ export default function Scanner({ userId }) {
               <View style={styles.selectedProductContainer}>
                 <View style={styles.selectedProductHeader}>
                   <Ionicons name="pricetag-outline" size={18} color="#5E35B1" />
-                  <Text style={styles.selectedProductTitle}>Selected Item</Text>
+                  <Text style={styles.selectedProductTitle}>{language === 'en' ? 'Selected Item' : 'Napiling Item'}</Text>
                 </View>
                 <Text style={styles.selectedProductName} numberOfLines={2}>{selectedProduct.name}</Text>
                 <View style={styles.selectedProductDetailsRow}>
-                  <Text style={styles.selectedProductPrice}>₽{parseFloat(selectedProduct.price).toFixed(2)}</Text>
-                  <Text style={styles.selectedProductStock}>Stock: {selectedProduct.stock}</Text>
+                  <Text style={styles.selectedProductPrice}>₱{parseFloat(selectedProduct.price).toFixed(2)}</Text>
+                  <Text style={styles.selectedProductStock}>{language === 'en' ? 'Stock' : 'Stock'}: {selectedProduct.stock}</Text>
                 </View>
               </View>
             )}
 
             <View style={styles.qtyControls}>
-              <Text style={styles.qtyLabel}>Quantity</Text>
+              <Text style={styles.qtyLabel}>{t.quantity}</Text>
               <TouchableOpacity
                 style={styles.qtyButton}
                 onPress={() => setQty(prev => Math.max(1, prev - 1))}
@@ -2794,7 +3610,7 @@ export default function Scanner({ userId }) {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.sectionTitle}>Search Results ({filteredProducts.length})</Text>
+            <Text style={styles.sectionTitle}>{language === 'en' ? 'Search Results' : 'Mga Resulta'} ({filteredProducts.length})</Text>
           </View>
           <View style={styles.searchResultsContainer}>
             {isSearching ? (
@@ -2808,14 +3624,20 @@ export default function Scanner({ userId }) {
                   style={[styles.productItem, selectedProduct?.id === item.id && {backgroundColor: '#E5E7EB', borderColor: '#D1D5DB', borderWidth: 1}]}
                   onPress={() => {
                     if (item.stock <= 0) {
-                      showCustomAlert('Out of Stock', `${item.name} is currently out of stock and cannot be selected.`, 'warning');
+                      showCustomAlert(
+                        language === 'en' ? 'Out of Stock' : 'Walang Stock',
+                        language === 'en' 
+                          ? `${item.name} is currently out of stock and cannot be selected.`
+                          : `Ang ${item.name} ay kasalukuyang walang stock at hindi maaaring piliin.`,
+                        'warning'
+                      );
                     } else {
                       setSelectedProduct(item);
                     }
                   }}
                 >
                   <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.productStockList}>Stock: {item.stock}</Text>
+                  <Text style={styles.productStockList}>{language === 'en' ? 'Stock' : 'Stock'}: {item.stock}</Text>
                 </TouchableOpacity>
               )}
               keyboardShouldPersistTaps="handled"
@@ -2830,7 +3652,7 @@ export default function Scanner({ userId }) {
               onPress={() => setSelectedProduct(null)}
             >
               <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
-              <Text style={[styles.buttonText, {color: '#DC2626'}]}>Cancel</Text>
+              <Text style={[styles.buttonText, {color: '#DC2626'}]}>{t.cancel}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.addButton, {flex: 1}, !selectedProduct && { backgroundColor: '#A0AEC0' }, selectedProduct?.stock === 0 && { backgroundColor: '#A0AEC0' }]}
@@ -2838,13 +3660,17 @@ export default function Scanner({ userId }) {
                 if (selectedProduct) {
                   addScannedItem(selectedProduct, selectedProduct.id, 'manual');
                 } else {
-                  showCustomAlert('No Product Selected', 'Please scan or select a product first', 'info');
+                  showCustomAlert(
+                    language === 'en' ? 'No Product Selected' : 'Walang Napiling Produkto',
+                    language === 'en' ? 'Please scan or select a product first' : 'Mangyaring mag-scan o pumili ng produkto muna',
+                    'info'
+                  );
                 }
               }}
               disabled={!selectedProduct || selectedProduct?.stock === 0}
             >
               <Ionicons name="add-circle" size={18} color="#fff" />
-              <Text style={styles.buttonText}>Add to Cart</Text>
+              <Text style={styles.buttonText}>{t.addToCart}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2881,6 +3707,7 @@ export default function Scanner({ userId }) {
       {renderCustomAlert()}
       {renderReceiptModal()}
       {renderConfirmationModal()}
+      {renderNegativeProfitModal()}
       {renderSettingsModal()}
       {renderLogoutConfirmationModal()}
       {renderWalkthroughModal()}

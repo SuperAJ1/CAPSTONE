@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as ScreenOrientation from 'expo-screen-orientation';
 
+import { LanguageProvider } from './contexts/LanguageContext';
 import LandingPage from './screens/LandingPage';
 import Login from './screens/Login';
 import ForgotPassword from './screens/ForgotPassword';
@@ -21,20 +22,22 @@ export default function App() {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
   }, []);
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <StatusBar hidden={true} />
-      <SafeAreaProvider>
-        <NavigationContainer>
-          <Stack.Navigator initialRouteName="Landing" screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="Landing" component={LandingPage} />
-            <Stack.Screen name="Login" component={Login} />
-            <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
-            <Stack.Screen name="ResetPassword" component={ResetPassword} />
-            <Stack.Screen name="MainApp" component={ResponsiveNavigation} />
-            <Stack.Screen name="Scanner2" component={Scanner2} />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <LanguageProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <StatusBar hidden={true} />
+        <SafeAreaProvider>
+          <NavigationContainer>
+            <Stack.Navigator initialRouteName="Landing" screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="Landing" component={LandingPage} />
+              <Stack.Screen name="Login" component={Login} />
+              <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
+              <Stack.Screen name="ResetPassword" component={ResetPassword} />
+              <Stack.Screen name="MainApp" component={ResponsiveNavigation} />
+              <Stack.Screen name="Scanner2" component={Scanner2} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </LanguageProvider>
   );
 }

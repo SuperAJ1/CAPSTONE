@@ -1,87 +1,156 @@
-    <?php
+<?php
+// Start output buffering to catch any unexpected output
+ob_start();
 
-    ini_set('display_errors', 1);
-    ini_set('display_startup_errors', 1);
-    error_reporting(E_ALL);
+// Suppress HTML error output - we'll handle errors as JSON
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
+error_reporting(E_ALL);
 
-    header("Content-Type: application/json; charset=UTF-8");
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type');
-
-    // Handle preflight OPTIONS request
-    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-        http_response_code(200);
+// Register shutdown function to catch fatal errors and unexpected output
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error !== NULL && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        // Only send JSON error if headers haven't been sent
+        if (!headers_sent()) {
+            ob_end_clean();
+            header("Content-Type: application/json; charset=UTF-8");
+            http_response_code(500);
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Fatal error: ' . $error['message'] . ' in ' . basename($error['file']) . ' on line ' . $error['line']
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
+        }
         exit();
     }
-
-    // Only allow POST requests
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        http_response_code(405);
-        echo json_encode([
-            'status' => 'error',
-            'message' => 'Method not allowed. Use POST.'
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
-        exit();
+    
+    // Check if there's any unexpected output (only if we haven't already sent JSON)
+    if (ob_get_level() > 0) {
+        $output = ob_get_contents();
+        if (!empty($output) && !empty(trim($output))) {
+            // If output doesn't look like JSON, it's probably an error
+            $trimmed = trim($output);
+            if (substr($trimmed, 0, 1) !== '{' && substr($trimmed, 0, 1) !== '[' && !headers_sent()) {
+                ob_end_clean();
+                header("Content-Type: application/json; charset=UTF-8");
+                http_response_code(500);
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => 'Unexpected server output detected. Please check server logs.',
+                    'details' => substr($trimmed, 0, 200) // First 200 chars for debugging
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
+                exit();
+            }
+        }
     }
+});
 
+// Set JSON headers first
+header("Content-Type: application/json; charset=UTF-8");
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+// Handle preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    ob_end_clean();
+    http_response_code(200);
+    exit();
+}
+
+// Only allow POST requests
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    ob_end_clean();
+    http_response_code(405);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Method not allowed. Use POST.'
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
+    exit();
+}
+
+// Try to include db_connection.php with error handling
+if (!file_exists('db_connection.php')) {
+    ob_end_clean();
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Database configuration file not found'
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
+    exit();
+}
+
+try {
     require_once 'db_connection.php';
+    
+    // Check if $pdo is defined
+    if (!isset($pdo)) {
+        throw new Exception('Database connection not initialized');
+    }
+} catch (Exception $e) {
+    ob_end_clean();
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Database connection failed: ' . $e->getMessage()
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK);
+    exit();
+}
 
+try {
+    // Get JSON input
+    $json = file_get_contents('php://input');
+    $data = json_decode($json, true);
+    
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        throw new Exception('Invalid JSON format: ' . json_last_error_msg());
+    }
+    
+    // Validate required fields
+    if (!isset($data['transaction_id']) || empty($data['transaction_id'])) {
+        throw new Exception('Transaction ID is required');
+    }
+    
+    if (!isset($data['items']) || !is_array($data['items']) || empty($data['items'])) {
+        throw new Exception('Items array is required and cannot be empty');
+    }
+    
+    $transaction_id = intval($data['transaction_id']);
+    $user_id = isset($data['user_id']) ? intval($data['user_id']) : null;
+    $global_discount = isset($data['global_discount']) ? floatval($data['global_discount']) : 0;
+    $cash_tendered = isset($data['cash_tendered']) ? floatval($data['cash_tendered']) : 0;
+    $additional_payment = isset($data['additional_payment']) ? floatval($data['additional_payment']) : 0;
+    $items = $data['items'];
+    
+    // Validate global discount range
+    if ($global_discount < 0 || $global_discount > 100) {
+        throw new Exception('Global discount must be between 0 and 100');
+    }
+    
+    // Validate cash tendered
+    if ($cash_tendered < 0) {
+        throw new Exception('Cash tendered cannot be negative');
+    }
+    
+    // Validate additional payment
+    if ($additional_payment < 0) {
+        throw new Exception('Additional payment cannot be negative');
+    }
+    
+    // Add additional payment to cash_tendered if provided
+    if ($additional_payment > 0) {
+        $cash_tendered = $cash_tendered + $additional_payment;
+    }
+    
+    // Declare variables at function scope so they're accessible in catch blocks
+    $calculated_total = 0;
+    $balance_due = 0;
+    $cash_tendered_to_update = $cash_tendered;
+    
+    // Start transaction for data integrity
+    $pdo->beginTransaction();
+    
     try {
-        
-        // Get JSON input
-        $json = file_get_contents('php://input');
-        $data = json_decode($json, true);
-        
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid JSON format: ' . json_last_error_msg());
-        }
-        
-        // Validate required fields
-        if (!isset($data['transaction_id']) || empty($data['transaction_id'])) {
-            throw new Exception('Transaction ID is required');
-        }
-        
-        if (!isset($data['items']) || !is_array($data['items']) || empty($data['items'])) {
-            throw new Exception('Items array is required and cannot be empty');
-        }
-        
-        $transaction_id = intval($data['transaction_id']);
-        $user_id = isset($data['user_id']) ? intval($data['user_id']) : null;
-        $global_discount = isset($data['global_discount']) ? floatval($data['global_discount']) : 0;
-        $cash_tendered = isset($data['cash_tendered']) ? floatval($data['cash_tendered']) : 0;
-        $additional_payment = isset($data['additional_payment']) ? floatval($data['additional_payment']) : 0;
-        $items = $data['items'];
-        
-        // Validate global discount range
-        if ($global_discount < 0 || $global_discount > 100) {
-            throw new Exception('Global discount must be between 0 and 100');
-        }
-        
-        // Validate cash tendered
-        if ($cash_tendered < 0) {
-            throw new Exception('Cash tendered cannot be negative');
-        }
-        
-        // Validate additional payment
-        if ($additional_payment < 0) {
-            throw new Exception('Additional payment cannot be negative');
-        }
-        
-        // Add additional payment to cash_tendered if provided
-        if ($additional_payment > 0) {
-            $cash_tendered = $cash_tendered + $additional_payment;
-        }
-        
-        // Declare variables at function scope so they're accessible in catch blocks
-        $calculated_total = 0;
-        $balance_due = 0;
-        $cash_tendered_to_update = $cash_tendered;
-        
-        // Start transaction for data integrity
-        $pdo->beginTransaction();
-        
-        try {
             // Check if receipt exists
             $stmt = $pdo->prepare("SELECT receipt_id FROM receipt WHERE receipt_id = ?");
             $stmt->execute([$transaction_id]);
@@ -96,13 +165,23 @@
             $stmt->execute([$transaction_id]);
             $old_items = $stmt->fetchAll();
             
+            // CRITICAL: Delete sale_items BEFORE deleting receipt_items to avoid foreign key constraint violation
+            // sale_items has a foreign key (receipt_item_id) that references receipt_items (item_id)
+            // We must delete child records (sale_items) before parent records (receipt_items)
+            $stmt = $pdo->prepare("DELETE FROM sale_items WHERE receipt_item_id IN (SELECT item_id FROM receipt_items WHERE receipt_id = ?)");
+            $stmt->execute([$transaction_id]);
+            
+            // Delete sale_summary for this receipt
+            $stmt = $pdo->prepare("DELETE FROM sale_summary WHERE receipt_id = ?");
+            $stmt->execute([$transaction_id]);
+            
             // Restore stock for old items
             foreach ($old_items as $old_item) {
                 $stmt = $pdo->prepare("UPDATE inventory SET stock = stock + ? WHERE id = ?");
                 $stmt->execute([$old_item['quantity'], $old_item['inventory_id']]);
             }
             
-            // Delete old receipt items
+            // Delete old receipt items (now safe since sale_items are already deleted)
             $stmt = $pdo->prepare("DELETE FROM receipt_items WHERE receipt_id = ?");
             $stmt->execute([$transaction_id]);
             
@@ -355,6 +434,88 @@
             error_log("  change_due = cash_tendered - total_amount");
         }
         error_log("================================================");
+        
+        // Update sale_items and sale_summary tables
+        // Note: sale_items and sale_summary were already deleted earlier (before deleting receipt_items)
+        // Now we need to insert new records for the updated receipt_items
+        
+        // Get all receipt_items for this receipt (including newly inserted ones)
+        $stmt = $pdo->prepare("
+            SELECT ri.item_id, ri.inventory_id, ri.quantity, ri.price_each, ri.discount_percent, i.cost_price 
+            FROM receipt_items ri 
+            LEFT JOIN inventory i ON ri.inventory_id = i.id 
+            WHERE ri.receipt_id = ?
+        ");
+        $stmt->execute([$transaction_id]);
+        $all_receipt_items = $stmt->fetchAll();
+        
+        $total_cost_of_goods = 0;
+        
+        // Insert into sale_items for each receipt_item
+        foreach ($all_receipt_items as $receipt_item) {
+            $receipt_item_id = $receipt_item['item_id'];
+            $inventory_id = $receipt_item['inventory_id'];
+            $quantity = intval($receipt_item['quantity']);
+            $price_each = floatval($receipt_item['price_each']);
+            $discount_percent = isset($receipt_item['discount_percent']) ? floatval($receipt_item['discount_percent']) : 0;
+            $cost_price = isset($receipt_item['cost_price']) ? floatval($receipt_item['cost_price']) : 0;
+            
+            // Calculate actual sell_price after discount (per unit)
+            $actual_sell_price_per_unit = $price_each * (1 - ($discount_percent / 100));
+            
+            // Calculate profit: (actual_sell_price_per_unit - cost_price) * quantity
+            // IMPORTANT: This can be negative if selling below cost (sell_price < cost_price)
+            // Negative profit means selling at a loss - this should be recorded as negative value
+            $profit = ($actual_sell_price_per_unit - $cost_price) * $quantity;
+            
+            // CRITICAL: Preserve negative values - do NOT use abs(), max(0, ...), or any function that converts negative to positive
+            // Negative profit must be recorded as negative in sale_items table
+            $profit = round($profit, 2);
+            
+            // Log negative profit for debugging
+            if ($profit < 0) {
+                error_log("Negative profit detected: Item ID $inventory_id, Profit: $profit, Sell Price: $actual_sell_price_per_unit, Cost Price: $cost_price, Quantity: $quantity");
+            }
+            
+            $total_cost_of_goods += $cost_price * $quantity;
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO sale_items 
+                (receipt_item_id, inventory_id, quantity, sell_price, cost_price, profit) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $receipt_item_id,
+                $inventory_id,
+                $quantity,
+                round($actual_sell_price_per_unit, 2), // Store the discounted price per unit
+                round($cost_price, 2),
+                $profit // IMPORTANT: Can be negative - preserves negative profit when selling below cost
+            ]);
+        }
+        
+        // Calculate values for sale_summary
+        $gross_amount = round($subtotal, 2); // Subtotal before discounts
+        $discount_amount = round($total_item_discount + $global_discount_amount, 2); // Total discounts
+        $net_sales = round($total_amount, 2); // Final total after all discounts
+        $cost_of_goods = round($total_cost_of_goods, 2); // Total cost of all items
+        $profit = round($net_sales - $cost_of_goods, 2); // Net profit
+        
+        // Insert into sale_summary table
+        $stmt = $pdo->prepare("
+            INSERT INTO sale_summary 
+            (receipt_id, gross_amount, discount_amount, net_sales, cost_of_goods, profit, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $transaction_id,
+            $gross_amount,
+            $discount_amount,
+            $net_sales,
+            $cost_of_goods,
+            $profit,
+            $original_date_issued
+        ]);
         
         // Commit transaction
         $pdo->commit();

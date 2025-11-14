@@ -13,17 +13,24 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ForgotPassword() {
+  const { language } = useLanguage();
+  const t = translations[language];
   const [username, setUsername] = useState('');
   const [question, setQuestion] = useState('');
   const navigation = useNavigation();
 
   const handleReset = async () => {
     if (!username || !question) {
-      Alert.alert('Error', 'Please fill in all fields.');
+      Alert.alert(
+        t.error,
+        language === 'en' ? 'Please fill in all fields.' : 'Mangyaring punan ang lahat ng mga field.'
+      );
       return;
     }
 
@@ -41,11 +48,17 @@ export default function ForgotPassword() {
       if (json.status === 'success') {
         navigation.navigate('ResetPassword', { username }); // pass username to next screen
       } else {
-        Alert.alert('Invalid Answer', json.message || 'Incorrect security answer.');
+        Alert.alert(
+          language === 'en' ? 'Invalid Answer' : 'Hindi Wasto ang Sagot',
+          json.message || (language === 'en' ? 'Incorrect security answer.' : 'Hindi wasto ang sagot sa seguridad.')
+        );
       }
     } catch (error) {
       console.error('Error verifying security question:', error);
-      Alert.alert('Connection Error', 'Failed to connect to the server.');
+      Alert.alert(
+        language === 'en' ? 'Connection Error' : 'Error sa Koneksyon',
+        language === 'en' ? 'Failed to connect to the server.' : 'Nabigo ang koneksyon sa server.'
+      );
     }
   };
 
@@ -59,36 +72,42 @@ export default function ForgotPassword() {
           <View style={styles.container}>
             {/* Header */}
             <View style={styles.headerContainer}>
-              <Text style={styles.headerTitle}>Forgot Password</Text>
-              <Text style={styles.headerSubtitle}>Answer your security question</Text>
+              <Text style={styles.headerTitle}>{t.forgotPasswordTitle}</Text>
+              <Text style={styles.headerSubtitle}>
+                {language === 'en' ? 'Answer your security question' : 'Sagutin ang iyong security question'}
+              </Text>
             </View>
 
             {/* Form */}
             <View style={styles.formContainer}>
-              <Text style={styles.label}>Username</Text>
+              <Text style={styles.label}>{t.usernamePlaceholder}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Enter your username"
+                placeholder={language === 'en' ? 'Enter your username' : 'Ilagay ang iyong username'}
                 placeholderTextColor="#aaa"
                 value={username}
                 onChangeText={setUsername}
               />
 
-              <Text style={styles.label}>What is your favorite food?</Text>
+              <Text style={styles.label}>
+                {language === 'en' ? 'What is your favorite food?' : 'Ano ang iyong paboritong pagkain?'}
+              </Text>
               <TextInput
                 style={styles.input}
-                placeholder="Type your answer"
+                placeholder={language === 'en' ? 'Type your answer' : 'Ilagay ang iyong sagot'}
                 placeholderTextColor="#aaa"
                 value={question}
                 onChangeText={setQuestion}
               />
 
               <TouchableOpacity style={styles.resetButton} onPress={handleReset}>
-                <Text style={styles.resetButtonText}>SUBMIT</Text>
+                <Text style={styles.resetButtonText}>
+                  {language === 'en' ? 'SUBMIT' : 'ISUMITE'}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity onPress={() => navigation.goBack()}>
-                <Text style={styles.backText}>Back to Login</Text>
+                <Text style={styles.backText}>{t.backToLogin}</Text>
               </TouchableOpacity>
             </View>
           </View>

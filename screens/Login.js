@@ -23,6 +23,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 
 import { API_URL } from '../utils/config';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 
 const getStyles = (width, height) => {
   const IS_LANDSCAPE = width > height;
@@ -347,12 +349,94 @@ const getStyles = (width, height) => {
       fontWeight: '600',
       letterSpacing: 0.3,
     },
+    languageButton: {
+      position: 'absolute',
+      top: 20,
+      right: 20,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 20,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 3,
+      borderWidth: 1,
+      borderColor: '#E5E5E7',
+      zIndex: 10,
+    },
+    languageButtonText: {
+      fontSize: Math.min(width * 0.040, 16),
+      fontWeight: '600',
+      color: '#1D1D1F',
+      marginLeft: 8,
+    },
+    languageModalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    languageModalCard: {
+      backgroundColor: '#FFFFFF',
+      borderRadius: 20,
+      padding: 24,
+      width: '100%',
+      maxWidth: Math.min(350, width * 0.85),
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.2,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+    languageModalTitle: {
+      fontSize: Math.min(width * 0.065, 24),
+      fontWeight: '700',
+      color: '#1D1D1F',
+      marginBottom: 24,
+      textAlign: 'center',
+    },
+    languageOption: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 16,
+      paddingHorizontal: 20,
+      borderRadius: 12,
+      marginBottom: 12,
+      backgroundColor: '#F5F5F7',
+      borderWidth: 2,
+      borderColor: '#E5E5E7',
+    },
+    languageOptionSelected: {
+      backgroundColor: '#E3F2FD',
+      borderColor: '#007AFF',
+    },
+    languageOptionText: {
+      fontSize: Math.min(width * 0.050, 18),
+      fontWeight: '600',
+      color: '#1D1D1F',
+    },
+    languageOptionSubtext: {
+      fontSize: Math.min(width * 0.038, 14),
+      color: '#86868B',
+      marginTop: 4,
+    },
   });
 }
+
 
 export default function Login() {
   const { width, height } = useWindowDimensions();
   const styles = getStyles(width, height);
+  const { language, changeLanguage } = useLanguage();
+  const t = translations[language];
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -361,6 +445,9 @@ export default function Login() {
   const [usernameError, setUsernameError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [isForgotPasswordModalVisible, setIsForgotPasswordModalVisible] = useState(false);
+  const [isLanguageModalVisible, setIsLanguageModalVisible] = useState(false);
+  const [isLanguageConfirmModalVisible, setIsLanguageConfirmModalVisible] = useState(false);
+  const [pendingLanguage, setPendingLanguage] = useState(null);
   const navigation = useNavigation();
   const slideAnim = useRef(new Animated.Value(0)).current;
   const usernameRef = useRef(null);
@@ -434,21 +521,21 @@ export default function Login() {
   const handleLogin = useCallback(async () => {
     // Focus guidance like the web demo: jump to first missing field
     if (!username.trim()) {
-      setUsernameError('Username is required');
+      setUsernameError(t.usernameRequired);
       triggerShake(usernameShake);
       usernameRef.current && usernameRef.current.focus && usernameRef.current.focus();
-      showNotify('Username is required');
+      showNotify(t.usernameRequired);
       return;
     }
     if (!password) {
-      setPasswordError('Password is required');
+      setPasswordError(t.passwordRequired);
       triggerShake(passwordShake);
       passwordRef.current && passwordRef.current.focus && passwordRef.current.focus();
-      showNotify('Password is required');
+      showNotify(t.passwordRequired);
       return;
     }
     if (!username.trim() || !password) {
-      Alert.alert('Error', 'Please enter both username and password.');
+      Alert.alert('Error', language === 'tl' ? 'Pakilagay ang username at password.' : 'Please enter both username and password.');
       return;
     }
 
@@ -514,13 +601,13 @@ export default function Login() {
             routes: [{ name: 'MainApp', params: { user: user } }],
           });
         } else {
-          Alert.alert('Access Denied', 'Invalid user role. Please contact an administrator.');
+          Alert.alert(t.accessDenied, t.invalidRole);
         }
       } else {
         const msg = responseData.message === 'Account is inactive'
-          ? 'Account is inactive'
-          : (responseData.message || 'Invalid username or password');
-        setUsernameError('Invalid username or password');
+          ? t.accountInactive
+          : (responseData.message || t.invalidCredentials);
+        setUsernameError(t.invalidCredentials);
         triggerShake(usernameShake);
         triggerShake(passwordShake);
         showNotify(msg);
@@ -528,16 +615,27 @@ export default function Login() {
     } catch (error) {
       console.error('Login error:', error);
       const msg = error.message && error.message.includes('Failed to fetch')
-        ? 'Network error. Check your connection.'
-        : (error.message || 'Login failed. Please try again.');
+        ? t.networkError
+        : (error.message || t.loginFailed);
       showNotify(msg);
     } finally {
       setIsLoading(false);
     }
-  }, [username, password, navigation]);
+  }, [username, password, navigation, language, t]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* Language Selector Button */}
+      <TouchableOpacity
+        style={styles.languageButton}
+        onPress={() => setIsLanguageModalVisible(true)}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="language-outline" size={22} color="#1D1D1F" />
+        <Text style={styles.languageButtonText}>{language === 'en' ? 'English' : 'Tagalog'}</Text>
+        <Ionicons name="chevron-down-outline" size={18} color="#86868B" style={{ marginLeft: 6 }} />
+      </TouchableOpacity>
+
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <View style={{ flex: 1 }}>
       <KeyboardAvoidingView
@@ -559,12 +657,12 @@ export default function Login() {
 
               {/* Card */}
               <View style={styles.card}>
-                <Text style={styles.welcomeTitle}>Welcome Back</Text>
-                <Text style={styles.welcomeSubtitle}>Enter your username to sign in to your account</Text>
+                <Text style={styles.welcomeTitle}>{t.welcomeTitle}</Text>
+                <Text style={styles.welcomeSubtitle}>{t.welcomeSubtitle}</Text>
 
                 <Animated.View style={[styles.inputWrapper, usernameError && styles.inputError, { transform: [{ translateX: usernameShake }], marginBottom: 12 }]}>
                   <TextInput
-                    placeholder="Username"
+                    placeholder={t.usernamePlaceholder}
                     placeholderTextColor="#86868B"
                     style={styles.input}
                     value={username}
@@ -584,7 +682,7 @@ export default function Login() {
 
                 <Animated.View style={[styles.inputWrapper, passwordError && styles.inputError, { transform: [{ translateX: passwordShake }] }]}>
                   <TextInput
-                    placeholder="Password"
+                    placeholder={t.passwordPlaceholder}
                     secureTextEntry={!showPassword}
                     placeholderTextColor="#86868B"
                     style={styles.input}
@@ -602,7 +700,7 @@ export default function Login() {
                 </Animated.View>
 
                 <TouchableOpacity onPress={() => setIsForgotPasswordModalVisible(true)}>
-                  <Text style={styles.forgotPassword}>Forgot password?</Text>
+                  <Text style={styles.forgotPassword}>{t.forgotPassword}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -617,7 +715,7 @@ export default function Login() {
                   }}
                   disabled={isLoading}
                 >
-                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.loginButtonText}>Sign In</Text>}
+                  {isLoading ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.loginButtonText}>{t.signIn}</Text>}
                 </TouchableOpacity>
               </View>
             </View>
@@ -668,18 +766,18 @@ export default function Login() {
 
             {/* Title */}
             <View style={styles.modalHeaderContainer}>
-              <Text style={styles.modalTitle}>Forgot Password</Text>
-              <Text style={styles.modalSubtitle}>Password reset assistance</Text>
+              <Text style={styles.modalTitle}>{t.forgotPasswordTitle}</Text>
+              <Text style={styles.modalSubtitle}>{t.forgotPasswordSubtitle}</Text>
             </View>
 
             {/* Message */}
             <Text style={styles.modalMessageText}>
-              Password resets are handled manually. Please contact the system administrator.
+              {t.forgotPasswordMessage}
             </Text>
 
             {/* Contact Information */}
             <View style={styles.modalContactSection}>
-              <Text style={styles.modalContactTitle}>Contact Administrator</Text>
+              <Text style={styles.modalContactTitle}>{t.contactAdmin}</Text>
               
               <View style={styles.modalContactItem}>
                 <Ionicons name="call-outline" size={22} color="#86868B" />
@@ -698,8 +796,170 @@ export default function Login() {
               onPress={() => setIsForgotPasswordModalVisible(false)}
               activeOpacity={0.8}
             >
-              <Text style={styles.modalCloseButtonText}>Back to Login</Text>
+              <Text style={styles.modalCloseButtonText}>{t.backToLogin}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Language Selection Modal */}
+      <Modal
+        visible={isLanguageModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsLanguageModalVisible(false)}
+      >
+        <View style={styles.languageModalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setIsLanguageModalVisible(false)}
+          />
+          <View style={styles.languageModalCard}>
+            <Text style={styles.languageModalTitle}>
+              {language === 'en' ? 'Select Language' : 'Pumili ng Wika'}
+            </Text>
+            
+            <TouchableOpacity
+              style={[
+                styles.languageOption,
+                language === 'en' && styles.languageOptionSelected
+              ]}
+              onPress={() => {
+                if (language !== 'en') {
+                  setPendingLanguage('en');
+                  setIsLanguageModalVisible(false);
+                  setIsLanguageConfirmModalVisible(true);
+                } else {
+                  setIsLanguageModalVisible(false);
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.languageOptionText}>English</Text>
+                <Text style={styles.languageOptionSubtext}>Select English language</Text>
+              </View>
+              {language === 'en' && (
+                <Ionicons name="checkmark-circle" size={24} color="#007AFF" />
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.languageOption,
+                language === 'tl' && styles.languageOptionSelected
+              ]}
+              onPress={() => {
+                if (language !== 'tl') {
+                  setPendingLanguage('tl');
+                  setIsLanguageModalVisible(false);
+                  setIsLanguageConfirmModalVisible(true);
+                } else {
+                  setIsLanguageModalVisible(false);
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.languageOptionText}>Tagalog</Text>
+                <Text style={styles.languageOptionSubtext}>Pumili ng wikang Tagalog</Text>
+              </View>
+              {language === 'tl' && (
+                <Ionicons name="checkmark-circle" size={24} color="#007AFF" />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Language Change Confirmation Modal */}
+      <Modal
+        visible={isLanguageConfirmModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setIsLanguageConfirmModalVisible(false);
+          setPendingLanguage(null);
+          setIsLanguageModalVisible(true);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalOverlayTouchable}
+            activeOpacity={1}
+            onPress={() => {
+              setIsLanguageConfirmModalVisible(false);
+              setPendingLanguage(null);
+              setIsLanguageModalVisible(true);
+            }}
+          />
+          <View style={styles.modalCard}>
+            {/* Icon */}
+            <View style={styles.modalIconContainer}>
+              <Ionicons name="language-outline" size={44} color="#007AFF" />
+            </View>
+
+            {/* Title */}
+            <View style={styles.modalHeaderContainer}>
+              <Text style={styles.modalTitle}>
+                {language === 'en' ? 'Change Language?' : 'Palitan ang Wika?'}
+              </Text>
+              <Text style={styles.modalSubtitle}>
+                {language === 'en' 
+                  ? `Switch to ${pendingLanguage === 'en' ? 'English' : 'Tagalog'}?`
+                  : `Palitan sa ${pendingLanguage === 'en' ? 'English' : 'Tagalog'}?`}
+              </Text>
+            </View>
+
+            {/* Message */}
+            <Text style={styles.modalMessageText}>
+              {language === 'en'
+                ? 'Are you sure you want to change the language? The app will switch to the selected language.'
+                : 'Sigurado ka bang gusto mong palitan ang wika? Ang app ay magpapalit sa napiling wika.'}
+            </Text>
+
+            {/* Action Buttons */}
+            <View style={{ width: '100%', flexDirection: 'row', marginTop: 8 }}>
+              <TouchableOpacity
+                style={[styles.modalCloseButton, { 
+                  flex: 1, 
+                  backgroundColor: '#F5F5F7',
+                  marginTop: 0,
+                  marginRight: 6,
+                }]}
+                onPress={() => {
+                  setIsLanguageConfirmModalVisible(false);
+                  setPendingLanguage(null);
+                  setIsLanguageModalVisible(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.modalCloseButtonText, { color: '#1D1D1F' }]}>
+                  {t.cancel}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalCloseButton, { 
+                  flex: 1, 
+                  marginTop: 0,
+                  marginLeft: 6,
+                }]}
+                onPress={() => {
+                  if (pendingLanguage) {
+                    changeLanguage(pendingLanguage);
+                    setIsLanguageConfirmModalVisible(false);
+                    setPendingLanguage(null);
+                  }
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.modalCloseButtonText}>
+                  {language === 'en' ? 'Change' : 'Palitan'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

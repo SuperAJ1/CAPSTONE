@@ -18,6 +18,8 @@ import { useResponsive } from '../utils/responsive';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, withDelay, Easing, useDerivedValue, interpolate, Extrapolate } from 'react-native-reanimated';
 
 import { API_URL } from '../utils/config';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 
 const { width } = Dimensions.get('window');
 
@@ -63,7 +65,7 @@ const SummaryCard = ({ icon, label, value, subtext, color, gradientColors }) => 
   </View>
 );
 
-const ShimmeringLoader = () => {
+const ShimmeringLoader = ({ loadingText = 'Loading...' }) => {
   const shimmer = useSharedValue(-1);
 
   useEffect(() => {
@@ -93,7 +95,7 @@ const ShimmeringLoader = () => {
         <Animated.View style={[StyleSheet.absoluteFill, animatedStyle]} />
       </LinearGradient>
       <ActivityIndicator size="large" color="#4A90E2" />
-      <Text style={styles.loadingText}>Loading Dashboard...</Text>
+      <Text style={styles.loadingText}>{loadingText}</Text>
     </View>
   );
 };
@@ -121,21 +123,65 @@ const fetchInventory = async () => {
   }
 };
 
+// Normalize category name (handle case sensitivity, typos, null/undefined)
+function normalizeCategory(category) {
+  if (!category || category.trim() === '') {
+    return 'Uncategorized';
+  }
+  
+  const normalized = category.trim();
+  
+  // Handle common variations and typos
+  const categoryMap = {
+    'tshir': 'T-Shirt',
+    'tshirt': 'T-Shirt',
+    't-shirt': 'T-Shirt',
+    't shirt': 'T-Shirt',
+    'toy': 'Toy',
+    'toys': 'Toy',
+    'accessories': 'Accessories',
+    'accessory': 'Accessories',
+    'clothing': 'Clothing',
+    'clothes': 'Clothing',
+    'swimwear': 'Swimwear',
+    'swim wear': 'Swimwear',
+    'footwear': 'Footwear',
+    'shoes': 'Footwear',
+    'bags': 'Bags',
+    'bag': 'Bags',
+  };
+  
+  const lower = normalized.toLowerCase();
+  return categoryMap[lower] || normalized;
+}
+
+// Get proper display label for category
+function getCategoryLabel(category) {
+  const normalized = normalizeCategory(category);
+  return normalized;
+}
+
+// Get color scheme for category
 function getCategoryColors(category) {
-  switch (category) {
+  const normalized = normalizeCategory(category);
+  
+  switch (normalized) {
     case 'Accessories': return { color: '#C5BAFF', gradient: '#E6E0FF' };
     case 'Clothing': return { color: '#8FD3FF', gradient: '#D4EDFF' };
-    case 'TShir': return { color: '#8FD3FF', gradient: '#D4EDFF' }; // Assigning same as Clothing
-    case 'toy': return { color: '#FFD6A5', gradient: '#FFEEDA' }; // New color for toys
+    case 'T-Shirt': return { color: '#8FD3FF', gradient: '#D4EDFF' };
+    case 'Toy': return { color: '#FFD6A5', gradient: '#FFEEDA' };
     case 'Swimwear': return { color: '#A0E7E5', gradient: '#D9F7F6' };
     case 'Footwear': return { color: '#FFA3A3', gradient: '#FFD6D6' };
     case 'Bags': return { color: '#B5EAD7', gradient: '#E2F5EE' };
+    case 'Uncategorized': return { color: '#D3D3D3', gradient: '#F0F0F0' };
     default: return { color: '#D3D3D3', gradient: '#F0F0F0' };
   }
 }
 
 export default function Dashboard() {
   const { isTablet } = useResponsive();
+  const { language } = useLanguage();
+  const t = translations[language];
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null); // Add error state
@@ -200,16 +246,20 @@ export default function Dashboard() {
 
   const categoryCounts = {};
   inventory.forEach((item) => {
-    categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
+    const normalizedCategory = normalizeCategory(item.category);
+    categoryCounts[normalizedCategory] = (categoryCounts[normalizedCategory] || 0) + 1;
   });
 
   const pieData = Object.entries(categoryCounts)
+    .filter(([name]) => name !== 'Uncategorized') // Exclude uncategorized items from chart
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([name, count], index) => {
       const { color, gradient } = getCategoryColors(name);
+      const label = getCategoryLabel(name);
       return {
         name: name,
+        label: label, // Display label
         value: count,
         color: color,
         gradientCenterColor: gradient,
@@ -228,7 +278,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8F9FA' }}>
-        <ShimmeringLoader />
+        <ShimmeringLoader loadingText={t.loading} />
       </View>
     );
   }
@@ -238,13 +288,13 @@ export default function Dashboard() {
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
         <Feather name="alert-circle" size={40} color="#D0021B" />
         <Text style={{ marginTop: 10, fontSize: 16, color: '#D0021B', textAlign: 'center' }}>
-          Failed to load data. Please try again.
+          {language === 'en' ? 'Failed to load data. Please try again.' : 'Nabigo ang pag-load ng data. Subukan muli.'}
         </Text>
         <Text style={{ marginTop: 5, fontSize: 12, color: '#6B7280', textAlign: 'center' }}>
           ({error})
         </Text>
         <TouchableOpacity onPress={loadData} style={{ marginTop: 20, backgroundColor: '#4A90E2', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
-          <Text style={{ color: '#FFFFFF', fontSize: 16 }}>Retry</Text>
+          <Text style={{ color: '#FFFFFF', fontSize: 16 }}>{language === 'en' ? 'Retry' : 'Subukan Muli'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -262,7 +312,9 @@ export default function Dashboard() {
         {/* HEADER */}
         <View style={styles.headerContainer}>
           <Feather name="activity" size={26} color="#4A5568" />
-          <Text style={styles.subtitle}>Here's what's happening with your inventory today.</Text>
+          <Text style={styles.subtitle}>
+            {language === 'en' ? "Here's what's happening with your inventory today." : 'Narito ang nangyayari sa iyong inventory ngayon.'}
+          </Text>
         </View>
 
         {/* Summary Cards */}
@@ -270,36 +322,36 @@ export default function Dashboard() {
           <AnimatedSummaryCard
             index={0}
             icon="box"
-            label="Total Products"
+            label={t.totalItems}
             value={totalProducts}
-            subtext="Active items"
+            subtext={language === 'en' ? 'Active items' : 'Aktibong items'}
             color="#3B82F6"
             gradientColors={['#EFF6FF', '#FFFFFF']}
           />
           <AnimatedSummaryCard
             index={1}
             icon="dollar-sign"
-            label="Total Value"
+            label={t.totalSales}
             value={`₱${totalValue.toFixed(2)}`}
-            subtext="Current stock value"
+            subtext={language === 'en' ? 'Current stock value' : 'Kasalukuyang halaga ng stock'}
             color="#10B981"
             gradientColors={['#F0FDF4', '#FFFFFF']}
           />
           <AnimatedSummaryCard
             index={2}
             icon="trending-down"
-            label="Low Stock"
+            label={language === 'en' ? 'Low Stock' : 'Mababang Stock'}
             value={lowStock}
-            subtext="Items to restock"
+            subtext={language === 'en' ? 'Items to restock' : 'Items na kailangan i-restock'}
             color="#F59E0B"
             gradientColors={['#FFFBEB', '#FFFFFF']}
           />
           <AnimatedSummaryCard
             index={3}
             icon="x-circle"
-            label="Out of Stock"
+            label={language === 'en' ? 'Out of Stock' : 'Walang Stock'}
             value={outOfStock}
-            subtext="Items unavailable"
+            subtext={language === 'en' ? 'Items unavailable' : 'Items na hindi available'}
             color="#D0021B"
             gradientColors={['#FEF2F2', '#FFFFFF']}
           />
@@ -308,11 +360,20 @@ export default function Dashboard() {
         {/* Category Distribution */}
         <Animated.View style={[chartAnimatedStyle]}>
           <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={styles.card}>
-            <Text style={styles.cardTitle}>Category Distribution</Text>
+            <Text style={styles.cardTitle}>{t.categoryDistribution}</Text>
             {pieData.length === 0 ? (
               <View style={styles.emptyChartContainer}>
                 <Feather name="pie-chart" size={40} color="#E5E7EB" />
-                <Text style={styles.emptyChartText}>No category data available</Text>
+                <Text style={styles.emptyChartText}>
+                  {inventory.length === 0 
+                    ? t.noInventoryItems
+                    : t.noCategoryData}
+                </Text>
+                {inventory.length > 0 && (
+                  <Text style={[styles.emptyChartText, { fontSize: 14, marginTop: 8, color: '#9CA3AF' }]}>
+                    {t.assignCategories}
+                  </Text>
+                )}
               </View>
             ) : (
               <View style={styles.chartContainer}>
@@ -339,12 +400,12 @@ export default function Dashboard() {
                         {focussedIndex > -1 ? (
                           <>
                             <Text style={styles.centerLabelValue}>{`${percentage}%`}</Text>
-                            <Text style={styles.centerLabelText}>{focusedItem.name}</Text>
+                            <Text style={styles.centerLabelText}>{focusedItem.label || focusedItem.name}</Text>
                           </>
                         ) : (
                           <>
                             <Text style={styles.centerLabelValue}>{total}</Text>
-                            <Text style={styles.centerLabelText}>Total Items</Text>
+                            <Text style={styles.centerLabelText}>{t.totalItems}</Text>
                           </>
                         )}
                       </View>
@@ -359,7 +420,7 @@ export default function Dashboard() {
                       onPress={() => setFocussedIndex(index === focussedIndex ? -1 : index)}
                     >
                       <View style={[styles.legendDot, { backgroundColor: item.color }]} />
-                      <Text style={styles.legendLabel}>{item.name} ({item.value})</Text>
+                      <Text style={styles.legendLabel}>{item.label || item.name} ({item.value})</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -373,12 +434,14 @@ export default function Dashboard() {
           <View style={styles.listRow}>
             {/* Recently Added */}
             <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={[styles.card, styles.listCard]}>
-              <Text style={styles.cardTitle}>Recently Added</Text>
+              <Text style={styles.cardTitle}>{language === 'en' ? 'Recently Added' : 'Kamakailang Idinagdag'}</Text>
               {recentlyAdded.map((item, index) => (
                 <View key={index} style={styles.itemRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.itemSub}>{item.stock} in stock · ₱{item.price}</Text>
+                    <Text style={styles.itemSub}>
+                      {item.stock} {language === 'en' ? 'in stock' : 'sa stock'} · ₱{item.price}
+                    </Text>
                   </View>
                   <Text style={styles.itemDate}>
                     {new Date(item.date_added).toLocaleDateString()}
@@ -389,7 +452,7 @@ export default function Dashboard() {
 
             {/* Highest Value Items */}
             <LinearGradient colors={['#FFFFFF', '#F9FAFB']} style={[styles.card, styles.listCard]}>
-              <Text style={styles.cardTitle}>Top Value Items</Text>
+              <Text style={styles.cardTitle}>{language === 'en' ? 'Top Value Items' : 'Nangungunang Items'}</Text>
               {topByValue.map((item, index) => (
                 <View key={index} style={styles.itemRow}>
                   <Text style={styles.rank}>{index + 1}.</Text>

@@ -12,21 +12,27 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useLanguage } from '../contexts/LanguageContext';
+import { translations } from '../utils/translations';
 
 const illustrations = [
   {
     src: require('../assets/illustration1.png'),
-    text: 'Easily manage your inventory and keep track of stock levels.',
+    textEn: 'Easily manage your inventory and keep track of stock levels.',
+    textTl: 'Madaling pamahalaan ang iyong inventory at subaybayan ang mga antas ng stock.',
   },
   {
     src: require('../assets/illustration2.png'),
-    text: 'Monitor sales and analyze trends for smarter business decisions.',
+    textEn: 'Monitor sales and analyze trends for smarter business decisions.',
+    textTl: 'Subaybayan ang mga benta at suriin ang mga trend para sa mas matalinong desisyon sa negosyo.',
   },
 ];
 
 export default function LandingPage() {
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
+  const { language } = useLanguage();
+  const t = translations[language];
   const isTablet = width > 768;
 
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -91,15 +97,19 @@ export default function LandingPage() {
                 },
               ]}
             />
-            <Text style={styles.title}>SIMS: Sales and Inventory System</Text>
+            <Text style={styles.title}>
+              {language === 'en' ? 'SIMS: Sales and Inventory System' : 'SIMS: Sales and Inventory System'}
+            </Text>
             <Text style={styles.subtitle}>
-              Manage your sales and stock with ease. Track products, organize inventory, and simplify operations.
+              {language === 'en'
+                ? 'Manage your sales and stock with ease. Track products, organize inventory, and simplify operations.'
+                : 'Pamahalaan ang iyong mga benta at stock nang madali. Subaybayan ang mga produkto, ayusin ang inventory, at pasimplehin ang mga operasyon.'}
             </Text>
             <TouchableOpacity
               style={styles.button}
               onPress={() => navigation.navigate('Login')}
             >
-              <Text style={styles.buttonText}>Get Started</Text>
+              <Text style={styles.buttonText}>{t.getStarted}</Text>
             </TouchableOpacity>
           </View>
 
@@ -112,7 +122,9 @@ export default function LandingPage() {
                 resizeMode="contain"
               />
               <Text style={styles.illustrationText}>
-                {illustrations[currentImageIndex].text}
+                {language === 'en'
+                  ? illustrations[currentImageIndex].textEn
+                  : illustrations[currentImageIndex].textTl}
               </Text>
             </Animated.View>
           </View>

@@ -46,7 +46,7 @@ describe('Dashboard Screen', () => {
   it('renders loading state initially', () => {
     jest.spyOn(global, 'fetch').mockImplementation(() => new Promise(() => {})); // Never resolves
     const { getByText } = render(<Dashboard />);
-    expect(getByText('Loading Dashboard...')).toBeTruthy();
+    expect(getByText('Loading...')).toBeTruthy();
   });
 
   it('displays summary cards and data after fetching', async () => {
@@ -59,13 +59,13 @@ describe('Dashboard Screen', () => {
 
     await waitFor(() => {
       // From mockInventoryItems:
-      // Total Products = 4
-      // Total Value = (10*500) + (4*1200) + (20*300) + (0*2500) = 5000 + 4800 + 6000 = 15800
+      // Total Items = 4
+      // Total Sales = (10*500) + (4*1200) + (20*300) + (0*2500) = 5000 + 4800 + 6000 = 15800
       // Low Stock (<=5) = Jeans (4), Sneakers (0) = 2
       // Out of Stock (==0) = Sneakers (0) = 1
-      expect(getByText('Total Products')).toBeTruthy();
+      expect(getByText('Total Items')).toBeTruthy();
       expect(getByText('4')).toBeTruthy();
-      expect(getByText('Total Value')).toBeTruthy();
+      expect(getByText('Total Sales')).toBeTruthy();
       expect(getByText('₱15800.00')).toBeTruthy();
       expect(getByText('Low Stock')).toBeTruthy();
       expect(getByText('2')).toBeTruthy();

@@ -116,7 +116,7 @@ const TransactionsScreen = () => {
         </View>
         <Text style={styles.cardDate}>{item.date}</Text>
         <Text style={styles.cardAmount}>
-          ₽{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          ₱{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
         </Text>
       </View>
     </Animated.View>

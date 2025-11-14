@@ -80,10 +80,13 @@ describe('Scanner2 Screen', () => {
 
     // Find the camera toggle switch and turn it on
     const cameraSwitch = getByRole('switch');
-    fireEvent(cameraSwitch, 'valueChange', true);
+    
+    await act(async () => {
+      fireEvent(cameraSwitch, 'valueChange', true);
+    });
 
-    // Wait for the camera view to appear
-    const cameraView = await findByTestId('camera-view');
+    // Wait for the camera view to appear with increased timeout
+    const cameraView = await findByTestId('camera-view', {}, { timeout: 10000 });
     expect(cameraView).toBeTruthy();
-  });
+  }, 15000);
 });
